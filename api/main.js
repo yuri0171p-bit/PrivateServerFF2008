@@ -212,9 +212,9 @@ const DEFAULT_SETTINGS = {
     is_firewall_open: false,
     is_review_server: false,
     is_server_open: true,
-    maintenance_announcement: 'Este projeto não faz afiliação com a garena.',
+    maintenance_announcement: '10$(@!/ {TRADUZIDO} PEIDA.',
     remote_option_version: '1.0.0',
-    remote_version: '1.43.0',
+    remote_version: '1.25.3',
     server_url: 'https://private-serverffrevgab.vercel.app/'
 };
 
@@ -321,7 +321,7 @@ const server = http.createServer((req, res) => {
     try {
         // 1. Rotas de versão
         if (route === '/live/ver.php' || route === '/live/appstoreversioninfo') {
-            return textResponse(res, '1.43.0');
+            return textResponse(res, '1.25.3');
         }
 
         // 2. Token de Convidado (Guest Token Grant)
@@ -357,8 +357,8 @@ const server = http.createServer((req, res) => {
                 is_review_server: false,
                 is_server_open: true,
                 maintenance_announcement: "",
-                remote_version: "1.43.0",
-                version: "1.43.0",
+                remote_version: "1.25.3",
+                version: "1.25.3",
                 appstore: "googleplay",
                 device: "android",
                 platform: "android"
@@ -520,8 +520,8 @@ const server = http.createServer((req, res) => {
         if (route === '/app/info/get') {
             return jsonResponse(res, {
                 code: 0,
-                version: "1.43.0",
-                remote_version: "1.43.0",
+                version: "1.25.3",
+                remote_version: "1.25.3",
                 appstore_url: "https://play.google.com/store/apps/details?id=com.dts.freefireth",
                 cdn_url: "https://cdn.barbosasmobile.com/",
                 is_server_open: true,
