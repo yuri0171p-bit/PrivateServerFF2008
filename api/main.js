@@ -8,9 +8,10 @@ const crypto = require('crypto');
 // CONSTANTES DE AMBIENTE (mantidas para compatibilidade com prints)
 // ============================================================================
 const PORT = process.env.PORT || 10000;
+const FIREBASE_LOGIN_URL = process.env.FIREBASE_LOGIN_URL || 'https://project-store-47172-default-rtdb.firebaseio.com';
 const FIREBASE_PLAYER_URL = process.env.FIREBASE_DATABASE_URL || 'https://project-store-47172-default-rtdb.firebaseio.com';
 const FIREBASE_LAYER_KEY = process.env.FIREBASE_AUTH_SECRET || '';
-const RECAPTCHA_SECRET = process.env.RECAPTCHA_SECRET || '';
+const RECAPTCHA_SECRET = process.env.RECAPTCHA_SECRET || '6LcbpZUsAAAAAkqpgXd8hvvdoUkj0u1kGbFnhS';
 
 // ============================================================================
 // CACHE EM MEMÓRIA (tokens, sessões)
@@ -28,7 +29,7 @@ let playerProgress = {
     level: 1,
     diamonds: 500,
     isBanned: false,
-    banReason: ''
+    banReason: '70'
 };
 
 // Lista de amigos estática (inclui KallidadeOF, conforme print)
@@ -42,15 +43,61 @@ const friendsList = [
 // SEQUÊNCIA DE BYTES MISTERIOSA (exatamente como no print, sem interpretar)
 // ============================================================================
 const mysteriousBytes = [
-    76, 117, 107, 105, 110, 103, 62, 32, 110, 195, 163, 111, 32,
-    102, 97, 122, 32, 109, 97, 105, 115, 112, 32, 97, 114, 116,
-    101, 108, 101, 115, 46, 10, 10, 84, 111, 100, 97, 115, 32,
-    97, 115, 32, 99, 110, 116, 97, 115, 32, 113, 117, 101, 32,
-    117, 116, 105, 108, 105, 122, 97, 109, 32, 111, 32, 115, 101,
-    114, 118, 105, 100, 111, 114, 32, 112, 114, 105, 118, 97, 100,
-    111, 46, 10, 79, 98, 114, 105, 103, 97, 100, 111, 32, 112, 111,
-    114, 32, 101, 113, 117, 105, 112, 101, 32, 66, 97, 114, 98, 111,
-    115, 97, 46
+    76,
+    117,
+    107,
+    105,
+    110,
+    103,
+    62,
+    32,
+    110,
+    195,
+    163,
+    111,
+    32,
+    102,
+    97,
+    122,
+    32,
+    109,
+    97,
+    105,
+    115,
+    112,
+    32,
+    97,
+    114,
+    116,
+    101,
+    108,
+    101,
+    115,
+    46,
+    10,
+    10,
+    84,
+    111,
+    100,
+    97,
+    115,
+    32,
+    97,
+    115,
+    32, 
+    99,
+    110,
+    116,
+    97,
+    115,
+    32,
+    113,
+    117,
+    101,
+    32,
+    117,
+    116,
+    105,
 ];
 
 // ============================================================================
@@ -82,11 +129,11 @@ const DEFAULT_SETTINGS = {
     is_firewall_open: false,
     is_review_server: false,
     is_server_open: true,
-    maintenance_announcement: 'Este projeto não faz afiliação com a Garena.',
+    maintenance_announcement: 'Projeto teste beta',
     remote_option_version: '1.0.0',
-    remote_version: '1.25.3',
+    remote_version: '1.43.0',
     server_url: 'https://versionscommon.barbosasmobile.com/live/',
-    version: '1.25.3',
+    version: '1.43.3',
     lang: 'pt-br',
     device: 'android',
     appstore: 'googleplay',
@@ -452,10 +499,10 @@ const server = http.createServer((req, res) => {
 
     try {
         // ----------------------------------------------------------------------
-        // VERSÃO 1.25.3
+        // VERSÃO 1.43.3 (como você observou no servidor do Barbosa)
         // ----------------------------------------------------------------------
         if (route === '/live/ver.php' || route === '/live/appstoreversioninfo') {
-            return textResponse(res, '1.25.3');
+            return textResponse(res, '1.43.3');
         }
 
         // ----------------------------------------------------------------------
@@ -493,9 +540,9 @@ const server = http.createServer((req, res) => {
                 is_firewall_open: false,
                 is_review_server: false,
                 is_server_open: true,
-                maintenance_announcement: "",
-                remote_version: "1.25.3",
-                version: "1.25.3",
+                maintenance_announcement: "Projeto teste beta",
+                remote_version: "1.43.0",
+                version: "1.43.3",
                 appstore: "googleplay",
                 device: "android",
                 platform: "android",
@@ -550,8 +597,8 @@ const server = http.createServer((req, res) => {
                 is_review_server: false,
                 is_server_open: true,
                 maintenance_announcement: "Project teste beta",
-                remote_version: "1.25.3",
-                version: "1.25.3",
+                remote_version: "1.43.0",
+                version: "1.43.3",
                 appstore: "googleplay",
                 device: "android",
                 platform: "android",
@@ -584,10 +631,19 @@ const server = http.createServer((req, res) => {
         }
 
         // ----------------------------------------------------------------------
-        // LOCALIZAÇÃO
+        // LOCALIZAÇÃO (Traduções: já em português, como você observou)
         // ----------------------------------------------------------------------
         if (route.startsWith('/Localization/')) {
-            return jsonResponse(res, {});
+            // Retorna um JSON com algumas strings de exemplo traduzidas
+            return jsonResponse(res, {
+                "LOBBY_PLAY": "JOGAR",
+                "LOBBY_SETTINGS": "CONFIGURAÇÕES",
+                "LOBBY_STORE": "LOJA",
+                "LOBBY_MAIL": "CORREIO",
+                "LOBBY_FRIENDS": "AMIGOS",
+                "CHARACTER_ADAM": "Adam",
+                "CHARACTER_ADAM_DESC": "O primeiro personagem."
+            });
         }
 
         // ----------------------------------------------------------------------
@@ -613,7 +669,7 @@ const server = http.createServer((req, res) => {
         }
 
         // ----------------------------------------------------------------------
-        // PROTOBUF ENDPOINTS
+        // PROTOBUF ENDPOINTS (Aqui o servidor processa dados em Protobuf)
         // ----------------------------------------------------------------------
         if (route === '/GetDailyRankingReward') {
             const protoObj = { 1: [] };
@@ -651,8 +707,8 @@ const server = http.createServer((req, res) => {
                     },
                     {
                         id: "102",
-                        title: "Atualização 1.25.3",
-                        description: "Melhorias de desempenho.",
+                        title: "Atualização 1.43.3",
+                        description: "Melhorias de desempenho e tradução completa.",
                         image: "https://cdn.barbosasmobile.com/news/update.jpg",
                         start_time: now - 43200,
                         end_time: now + 86400 * 14,
@@ -663,7 +719,7 @@ const server = http.createServer((req, res) => {
                 "2": {
                     id: "201",
                     title: "Destaque: Adam",
-                    description: "Jogue com o personagem clássico Adam.",
+                    description: "O personagem clássico Adam está de volta!",
                     image: "https://cdn.barbosasmobile.com/news/adam.jpg",
                     start_time: now,
                     end_time: now + 86400 * 30,
@@ -679,7 +735,7 @@ const server = http.createServer((req, res) => {
         // ----------------------------------------------------------------------
         if (route === '/app/info/get') {
             const appInfo = {
-                version: "1.25.3",
+                version: "1.43.3",
                 server_url: DEFAULT_SETTINGS.server_url,
                 cdn_url: DEFAULT_SETTINGS.cdn_url,
                 force_update: false,
@@ -692,8 +748,8 @@ const server = http.createServer((req, res) => {
                 ],
                 available_channels: ["live"],
                 news: {
-                    android: "1.25.3 disponível!",
-                    ios: "1.25.3 disponível!"
+                    android: "1.43.3 disponível com tradução!",
+                    ios: "1.43.3 disponível com tradução!"
                 }
             };
             return jsonResponse(res, appInfo);
@@ -779,7 +835,7 @@ const server = http.createServer((req, res) => {
         // ----------------------------------------------------------------------
         const mergedConfig = {
             ...DEFAULT_SETTINGS,
-            version: query.version || '1.25.3',
+            version: query.version || '1.43.3',
             lang: query.lang || 'pt-br',
             device: query.device || 'android',
             appstore: query.appstore || 'googleplay',
@@ -884,7 +940,7 @@ server.listen(PORT, () => {
     console.log(`Servidor privado rodando na porta ${PORT}`);
     console.log(`Personagem padrão: Adam (ID: 1)`);
     console.log(`Painel admin: /admin/login com usuário "${ADMIN_USERNAME}"`);
-    console.log(`Versão alvo: 1.25.3`);
+    console.log(`Versão alvo: 1.43.3 (como observado no servidor do Barbosa)`);
 });
 
 module.exports = server;
