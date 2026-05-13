@@ -234,7 +234,7 @@ const DEFAULT_SETTINGS = {
     maintenance_announcement: 'Este projeto não faz afiliação com a Garena.',
     remote_option_version: '1.0.0',
     remote_version: '1.25.3',
-    server_url: 'https://private-serverffrevgab.vercel.app/',
+    server_url: 'https://versionscommon.barbosasmobile.com/live/',
     version: '1.25.3',
     lang: 'pt-br',
     device: 'android',
