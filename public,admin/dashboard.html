@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - Contas</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      transition: background 0.3s, color 0.3s;
+    }
+    body.light {
+      background: #f5f5f5; color: #222;
+    }
+    body.dark {
+      background: #1a1a2e; color: #e0e0e0;
+    }
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      background: rgba(0,0,0,0.1);
+      backdrop-filter: blur(8px);
+    }
+    .navbar h2 { font-size: 1.4rem; }
+    .navbar button {
+      background: #4a6cf7;
+      color: white;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-left: 8px;
+    }
+    .theme-btn { background: none; font-size: 1.5rem; padding: 4px 8px; }
+    .container { max-width: 1000px; margin: 2rem auto; padding: 1rem; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+      background: rgba(255,255,255,0.05);
+    }
+    th, td {
+      padding: 12px;
+      border-bottom: 1px solid rgba(128,128,128,0.3);
+      text-align: left;
+    }
+    th { background: rgba(0,0,0,0.1); }
+    .btn-editar {
+      background: #4a6cf7;
+      color: white;
+      padding: 4px 12px;
+      border-radius: 4px;
+      text-decoration: none;
+    }
+    .ban-sim { color: #ff6b6b; font-weight: bold; }
+    .ban-nao { color: #51cf66; }
+    .loading { text-align: center; padding: 2rem; }
+    .erro-msg { color: #ff6b6b; }
+  </style>
+</head>
+<body class="light">
+  <div class="navbar">
+    <h2>📊 Painel de Contas</h2>
+    <div>
+      <button class="theme-btn" onclick="alternarTema()">🌓</button>
+      <button onclick="sair()">Sair</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <h3>Lista de jogadores</h3>
+    <div id="tabela-container">
+      <p class="loading">Carregando contas...</p>
+    </div>
+  </div>
+
+  <script src="accounts.js"></script>
+  <script>
+    // Aplicar tema salvo
+    (function() {
+      const tema = localStorage.getItem('tema') || 'light';
+      document.body.className = tema;
+    })();
+
+    function alternarTema() {
+      const novo = document.body.className === 'light' ? 'dark' : 'light';
+      document.body.className = novo;
+      localStorage.setItem('tema', novo);
+    }
+
+    verificarAutenticacao();
+
+    async function renderizarTabela() {
+      try {
+        const contas = await carregarContas();
+        const container = document.getElementById('tabela-container');
+        if (!contas.length) {
+          container.innerHTML = '<p>Nenhuma conta cadastrada.</p>';
+          return;
+        }
+        let html = `<table>
+          <thead>
+            <tr>
+              <th>ID</th><th>Nick</th><th>Diamantes</th><th>Gold</th><th>Banido</th><th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>`;
+        contas.forEach(c => {
+          html += `<tr>
+            <td>${c.id}</td>
+            <td>${c.nick}</td>
+            <td>${c.diamantes}</td>
+            <td>${c.gold}</td>
+            <td class="${c.banido ? 'ban-sim' : 'ban-nao'}">${c.banido ? 'Sim' : 'Não'}</td>
+            <td><a class="btn-editar" href="gerenciar.html?id=${c.id}">Editar</a></td>
+          </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+      } catch (err) {
+        document.getElementById('tabela-container').innerHTML = '<p class="erro-msg">Erro ao carregar contas.</p>';
+      }
+    }
+
+    renderizarTabela();
+  </script>
+</body>
+</html>
