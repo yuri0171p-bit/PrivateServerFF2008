@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gerenciar Conta</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      transition: background 0.3s, color 0.3s;
+    }
+    body.light {
+      background: #f5f5f5; color: #222;
+    }
+    body.dark {
+      background: #1a1a2e; color: #e0e0e0;
+    }
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      background: rgba(0,0,0,0.1);
+      backdrop-filter: blur(8px);
+    }
+    .navbar h2 { font-size: 1.4rem; }
+    .navbar button {
+      background: #4a6cf7;
+      color: white;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-left: 8px;
+    }
+    .theme-btn { background: none; font-size: 1.5rem; padding: 4px 8px; }
+    .container { max-width: 500px; margin: 2rem auto; padding: 1rem; }
+    .form-group { margin-bottom: 1rem; }
+    label { display: block; margin-bottom: 4px; font-weight: bold; }
+    input, select {
+      width: 100%;
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid #aaa;
+      background: transparent;
+      color: inherit;
+    }
+    button.salvar {
+      width: 100%;
+      padding: 10px;
+      background: #4a6cf7;
+      color: white;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .voltar { text-decoration: none; color: #4a6cf7; }
+    .sucesso { color: #51cf66; margin-top: 8px; }
+    .erro { color: #ff6b6b; }
+  </style>
+</head>
+<body class="light">
+  <div class="navbar">
+    <h2>✏️ Editar Conta</h2>
+    <div>
+      <button class="theme-btn" onclick="alternarTema()">🌓</button>
+      <button onclick="window.location.href='dashboard.html'">Voltar</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <h3 id="nick-titulo">Carregando...</h3>
+    <form id="form-edicao">
+      <div class="form-group">
+        <label>Diamantes:</label>
+        <input type="number" id="diamantes" min="0">
+      </div>
+      <div class="form-group">
+        <label>Gold:</label>
+        <input type="number" id="gold" min="0">
+      </div>
+      <div class="form-group">
+        <label>Banido:</label>
+        <select id="banido">
+          <option value="false">Não</option>
+          <option value="true">Sim</option>
+        </select>
+      </div>
+      <button type="submit" class="salvar">Salvar Alterações</button>
+    </form>
+    <p id="mensagem"></p>
+  </div>
+
+  <script src="accounts.js"></script>
+  <script>
+    (function() {
+      const tema = localStorage.getItem('tema') || 'light';
+      document.body.className = tema;
+    })();
+
+    function alternarTema() {
+      const novo = document.body.className === 'light' ? 'dark' : 'light';
+      document.body.className = novo;
+      localStorage.setItem('tema', novo);
+    }
+
+    verificarAutenticacao();
+
+    const params = new URLSearchParams(window.location.search);
+    const contaId = params.get('id');
+
+    if (!contaId) {
+      document.body.innerHTML = '<p style="color:red;padding:2rem;">ID da conta não informado.</p>';
+    }
+
+    async function carregarDados() {
+      const contas = await carregarContas();
+      const conta = contas.find(c => c.id == contaId);
+      if (!conta) {
+        document.getElementById('nick-titulo').textContent = 'Conta não encontrada';
+        return;
+      }
+      document.getElementById('nick-titulo').textContent = `Nick: ${conta.nick}`;
+      document.getElementById('diamantes').value = conta.diamantes;
+      document.getElementById('gold').value = conta.gold;
+      document.getElementById('banido').value = conta.banido.toString();
+    }
+
+    document.getElementById('form-edicao').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const dados = {
+        diamantes: parseInt(document.getElementById('diamantes').value),
+        gold: parseInt(document.getElementById('gold').value),
+        banido: document.getElementById('banido').value === 'true'
+      };
+      const res = await salvarConta(contaId, dados);
+      const msg = document.getElementById('mensagem');
+      if (res && res.sucesso) {
+        msg.className = 'sucesso';
+        msg.textContent = '✅ Conta atualizada com sucesso!';
+      } else {
+        msg.className = 'erro';
+        msg.textContent = 'Erro ao salvar. Verifique sua conexão.';
+      }
+    });
+
+    carregarDados();
+  </script>
+</body>
+</html>
