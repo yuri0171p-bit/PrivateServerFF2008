@@ -1,1 +1,9 @@
-
+[
+  {
+    "id": 1,
+    "name": "Coleção de Verão",
+    "items": [
+      { "item_id": 301, "type": "costume", "name": "Traje de Praia", "skin_id": 301002 }
+    ]
+  }
+]
