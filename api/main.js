@@ -17,7 +17,7 @@ const RECAPTCHA_SECRET = process.env.RECAPTCHA_SECRET || '6LcbpZUsAAAAAkqpgXd8hv
 // CACHE EM MEMÓRIA (tokens, sessões)
 // ============================================================================
 const cache = new Map();
-const CACHE_TTL = 60000; // 60 segundos
+const CACHE_TTL = 60 = 1000; // 60 segundos
 
 // ============================================================================
 // DADOS DE PERSISTÊNCIA SIMULADOS (apenas Adam)
