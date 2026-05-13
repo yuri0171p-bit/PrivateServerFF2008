@@ -1,17 +1,19 @@
 {
   "version": 2,
+  "builds": [
+    {
+      "src": "public,admin/**",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "public,admin/*.js",
+      "use": "@vercel/node"
+    }
+  ],
   "routes": [
-    { "src": "/live/ver.php", "dest": "/api/ver.js" },
-    { "src": "/live/appstoreversioninfo", "dest": "/api/ver.js" },
-    { "src": "/oauth/guest/token/grant", "dest": "/api/guestAuth.js" },
-    { "src": "/oauth/guest/register", "dest": "/api/PlatformRegister.js" },
-    { "src": "/oauth/login", "dest": "/api/PlatformLogin.js" },
-    { "src": "/facebook", "dest": "/api/facebook.js" },
-    { "src": "/.json", "dest": "/api/facebook.js" },
-    { "src": "/app/info/get", "dest": "/api/appInfo.js" },
-    { "src": "/oauth/token/inspect", "dest": "/api/inspect.js" },
-    { "src": "/GetActivityDesc", "dest": "/api/GetActivityDesc.js" },
-    { "src": "/convert", "dest": "/api/convert.js" },
-    { "src": "/(.*)", "dest": "/api/main.js" }
+    {
+      "src": "/(.*)",
+      "dest": "/public,admin/$1"
+    }
   ]
 }
