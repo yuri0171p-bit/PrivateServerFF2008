@@ -1,1 +1,10 @@
-
+{
+  "name": "privateserverff2018",
+  "version": "1.0.0",
+  "description": "Servidor privado Free Fire 1.25.3",
+  "main": "api/main.js",
+  "scripts": {
+    "start": "node api/main.js"
+  },
+  "dependencies": {}
+}
