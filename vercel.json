@@ -1,19 +1,14 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "public,admin/**",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "public,admin/*.js",
-      "use": "@vercel/node"
+  "functions": {
+    "api/*.js": {
+      "memory": 1024,
+      "maxDuration": 10
     }
-  ],
+  },
   "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/public,admin/$1"
-    }
+    { "src": "/api/main", "dest": "/api/main.js" },
+    { "src": "/api/ver", "dest": "/api/ver.js" },
+    { "src": "/itens.json", "dest": "/itens.json" }
   ]
 }
