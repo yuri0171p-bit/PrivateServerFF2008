@@ -1,14 +1,9 @@
 {
   "version": 2,
-  "functions": {
-    "api/*.js": {
-      "memory": 1024,
-      "maxDuration": 10
-    }
-  },
-  "routes": [
-    { "src": "/api/main", "dest": "/api/main.js" },
-    { "src": "/api/ver", "dest": "/api/ver.js" },
-    { "src": "/itens.json", "dest": "/itens.json" }
+  "rewrites": [
+    { "source": "/", "destination": "/api/main" },
+    { "source": "/api/main", "destination": "/api/main.js" },
+    { "source": "/api/ver", "destination": "/api/ver.js" },
+    { "source": "/itens.json", "destination": "/itens.json" }
   ]
 }
