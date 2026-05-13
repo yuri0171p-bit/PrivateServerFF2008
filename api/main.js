@@ -2,224 +2,75 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const url = require('url');
+const crypto = require('crypto');
 
-// ----------------------------------------------------------------------------------
-// Constantes de ambiente
-// ----------------------------------------------------------------------------------
+// ============================================================================
+// CONSTANTES DE AMBIENTE (mantidas para compatibilidade com prints)
+// ============================================================================
 const PORT = process.env.PORT || 10000;
 const FIREBASE_PLAYER_URL = process.env.FIREBASE_DATABASE_URL || 'https://project-store-47172-default-rtdb.firebaseio.com';
 const FIREBASE_LAYER_KEY = process.env.FIREBASE_AUTH_SECRET || '';
 const RECAPTCHA_SECRET = process.env.RECAPTCHA_SECRET || '';
 
-// ----------------------------------------------------------------------------------
-// Cache em memória (para dados de sessão / tokens)
-// ----------------------------------------------------------------------------------
+// ============================================================================
+// CACHE EM MEMÓRIA (tokens, sessões)
+// ============================================================================
 const cache = new Map();
 const CACHE_TTL = 60000; // 60 segundos
 
-// ----------------------------------------------------------------------------------
-// Função para ler varints de buffer (usada no decodeProtobuf)
-// ----------------------------------------------------------------------------------
-function readVarint(buffer, offset) {
-    let result = 0n;
-    let shift = 0n;
-    let pos = offset;
-
-    while (pos < buffer.length) {
-        const byte = BigInt(buffer[pos]);
-        result |= (byte & 0x7Fn) << shift;
-        pos++;
-        if ((byte & 0x80n) === 0n) {
-            return { value: result, offset: pos };
-        }
-        shift += 7n;
-    }
-    throw new Error('Varint ultrapassou o fim do buffer');
-}
-
-// ----------------------------------------------------------------------------------
-// Função auxiliar: decodeProtobuf (parser simplificado)
-// Suporta os wire types: 0 (varint), 1 (64-bit), 2 (length-delimited), 5 (32-bit)
-// ----------------------------------------------------------------------------------
-function decodeProtobuf(buffer) {
-    const obj = {};
-    let offset = 0;
-    const view = buffer instanceof Buffer ? buffer : Buffer.from(buffer);
-
-    while (offset < view.length) {
-        const tag = readVarint(view, offset);
-        offset = tag.offset;
-        const fieldNumber = Number(tag.value >> 3n);
-        const wireType = Number(tag.value & 0x07n);
-
-        if (wireType === 0) { // Varint
-            const varint = readVarint(view, offset);
-            obj[fieldNumber] = safeInt64(varint.value, 0);
-            offset = varint.offset;
-        } else if (wireType === 1) { // 64-bit (double ou fixed64)
-            if (offset + 8 > view.length) break;
-            const doubleVal = view.readDoubleLE(offset);
-            obj[fieldNumber] = doubleVal;
-            offset += 8;
-        } else if (wireType === 5) { // 32-bit (float ou fixed32)
-            if (offset + 4 > view.length) break;
-            const floatVal = view.readFloatLE(offset);
-            obj[fieldNumber] = floatVal;
-            offset += 4;
-        } else if (wireType === 2) { // Length-delimited
-            const lengthVarint = readVarint(view, offset);
-            const length = Number(lengthVarint.value);
-            offset = lengthVarint.offset;
-            if (offset + length > view.length) break;
-            const subBuffer = view.slice(offset, offset + length);
-            offset += length;
-            // Tenta decodificar como sub-mensagem ou trata como bytes/string
-            try {
-                const subObj = decodeProtobuf(subBuffer);
-                if (Object.keys(subObj).length === 0) {
-                    obj[fieldNumber] = subBuffer.toString('utf-8');
-                } else {
-                    obj[fieldNumber] = subObj;
-                }
-            } catch (e) {
-                obj[fieldNumber] = subBuffer.toString('utf-8');
-            }
-        } else {
-            // Tipo desconhecido – tenta pular um varint (não recomendado, mas evita loop infinito)
-            break;
-        }
-    }
-    return obj;
-}
-
-// ----------------------------------------------------------------------------------
-// safeInt64: converte BigInt ou number para inteiro seguro
-// ----------------------------------------------------------------------------------
-function safeInt64(value, defaultValue) {
-    if (typeof value === 'bigint') {
-        if (value > 9223372036854775807n || value < -9223372036854775808n) {
-            // Além do intervalo seguro, faz a conversão manual
-            const buf = Buffer.alloc(8);
-            buf.writeBigInt64LE(value);
-            return Number(buf.readBigInt64LE());
-        }
-        return Number(value);
-    }
-    if (typeof value === 'number') {
-        if (value > Number.MAX_SAFE_INTEGER || value < Number.MIN_SAFE_INTEGER) {
-            const buf = Buffer.alloc(8);
-            buf.writeBigInt64LE(BigInt(Math.floor(value)));
-            return Number(buf.readBigInt64LE());
-        }
-        return value;
-    }
-    return defaultValue;
-}
-
-// ----------------------------------------------------------------------------------
-// Gerenciamento manual de CORS
-// ----------------------------------------------------------------------------------
-function setCors(res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-}
-
-// Remove headers típicos do Vercel que podem causar problemas
-function removeVercelHeaders(res) {
-    const headersToRemove = [
-        'Access-Control-Allow-Origin',
-        'Content-Encoding',
-        'Transfer-Encoding',
-        'X-Vercel-Cache',
-        'X-Vercel-Id',
-        'X-Vercel-Execution-Region',
-        'X-Vercel-Edge-Region',
-        'X-Vercel-Proxy-Id',
-        'X-Vercel-Sec',
-        'X-Vercel-Worker',
-        'Cache-Control',
-        'CDN-Cache-Control',
-        'Vercel-CDN-Edge',
-        'Vercel-CDN-Origin',
-        'Vercel-Cache',
-        'Server',
-        'Via'
-    ];
-    headersToRemove.forEach(header => {
-        if (res.hasHeader(header)) {
-            res.removeHeader(header);
-        }
-    });
-}
-
-// ----------------------------------------------------------------------------------
-// Configurações padrão de headers
-// ----------------------------------------------------------------------------------
-const DEFAULT_HEADERS = {
-    'Server': 'Garena-Lobby-Server',
-    'Connection': 'close'
-};
-
-// ----------------------------------------------------------------------------------
-// Helpers de resposta HTTP
-// ----------------------------------------------------------------------------------
-function jsonResponse(res, data, statusCode = 200) {
-    const body = JSON.stringify(data);
-    res.writeHead(statusCode, {
-        ...DEFAULT_HEADERS,
-        'Content-Type': 'application/json; charset=utf-8',
-        'Content-Length': Buffer.byteLength(body)
-    });
-    res.end(body);
-}
-
-function textResponse(res, text, statusCode = 200) {
-    res.writeHead(statusCode, {
-        ...DEFAULT_HEADERS,
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Content-Length': Buffer.byteLength(text)
-    });
-    res.end(text);
-}
-
-function xmlResponse(res, xml, statusCode = 200) {
-    res.writeHead(statusCode, {
-        ...DEFAULT_HEADERS,
-        'Content-Type': 'application/xml; charset=utf-8',
-        'Content-Length': Buffer.byteLength(xml)
-    });
-    res.end(xml);
-}
-
-function binaryResponse(res, buffer, statusCode = 200) {
-    const len = buffer.length;
-    res.writeHead(statusCode, {
-        ...DEFAULT_HEADERS,
-        'Content-Type': 'application/octet-stream',
-        'Content-Length': len
-    });
-    res.end(buffer);
-}
-
-// ----------------------------------------------------------------------------------
-// Simulação de persistência via Firebase (em memória, apenas ouro e level do Adam)
-// ----------------------------------------------------------------------------------
+// ============================================================================
+// DADOS DE PERSISTÊNCIA SIMULADOS (apenas Adam)
+// ============================================================================
 let playerProgress = {
+    uid: '99999999',
+    nickname: 'Player',
     gold: 1000,
     level: 1,
-    uid: '99999999'
+    diamonds: 500,
+    isBanned: false,
+    banReason: ''
 };
 
-function updateProgress(gold, level) {
-    playerProgress.gold = gold;
-    playerProgress.level = level;
-    // Aqui seria a chamada real ao Firebase: firebaseRef.child(uid).update({gold, level})
-}
+// Lista de amigos estática (inclui KallidadeOF, conforme print)
+const friendsList = [
+    { uid: '11111111', nickname: 'KallidadeOF', level: 50, online: true },
+    { uid: '22222222', nickname: 'GuerreiroBR', level: 32, online: false },
+    { uid: '33333333', nickname: 'ProPlayer2025', level: 70, online: true }
+];
 
-// ----------------------------------------------------------------------------------
-// Configuração DEFAULT_SETTINGS (versão simplificada, apenas Adam)
-// ----------------------------------------------------------------------------------
+// ============================================================================
+// SEQUÊNCIA DE BYTES MISTERIOSA (exatamente como no print, sem interpretar)
+// ============================================================================
+const mysteriousBytes = [
+    76, 117, 107, 105, 110, 103, 62, 32, 110, 195, 163, 111, 32,
+    102, 97, 122, 32, 109, 97, 105, 115, 112, 32, 97, 114, 116,
+    101, 108, 101, 115, 46, 10, 10, 84, 111, 100, 97, 115, 32,
+    97, 115, 32, 99, 110, 116, 97, 115, 32, 113, 117, 101, 32,
+    117, 116, 105, 108, 105, 122, 97, 109, 32, 111, 32, 115, 101,
+    114, 118, 105, 100, 111, 114, 32, 112, 114, 105, 118, 97, 100,
+    111, 46, 10, 79, 98, 114, 105, 103, 97, 100, 111, 32, 112, 111,
+    114, 32, 101, 113, 117, 105, 112, 101, 32, 66, 97, 114, 98, 111,
+    115, 97, 46
+];
+
+// ============================================================================
+// OBJETO PLAYER DATA EXTRA (exatamente como no print)
+// ============================================================================
+const extraPlayerData = {
+    "5": {
+        "2": "KallidadeOF"
+    },
+    "6": {
+        "1": ""
+    },
+    "7": 1776539822,
+    "9": 1,
+    "10": 1
+};
+
+// ============================================================================
+// CONFIGURAÇÃO PADRÃO (DEFAULT_SETTINGS) COM APENAS ADAM
+// ============================================================================
 const DEFAULT_SETTINGS = {
     appstore_url: 'https://discord.gg/projectreverger',
     billboard_msg: 'Bem-vindo ao servidor privado!',
@@ -267,31 +118,112 @@ const DEFAULT_SETTINGS = {
     notifications: []
 };
 
-// ----------------------------------------------------------------------------------
-// Estrutura de e-mail simples (substituindo as mensagens gigantes do Barbosa)
-// ----------------------------------------------------------------------------------
-function generateMailItem(id, title, sender, message, received) {
-    return {
-        id: id,
-        title: title,
-        sender: sender,
-        message: message,
-        received: received,
-        read: false,
-        hasAttachment: false,
-        attachmentItems: []
-    };
+// ============================================================================
+// FUNÇÕES AUXILIARES DE PROTOBUF
+// ============================================================================
+
+/**
+ * Lê um varint do buffer a partir do offset fornecido.
+ * Retorna o valor (BigInt) e o novo offset.
+ */
+function readVarint(buffer, offset) {
+    let result = 0n;
+    let shift = 0n;
+    let pos = offset;
+
+    while (pos < buffer.length) {
+        const byte = BigInt(buffer[pos]);
+        result |= (byte & 0x7Fn) << shift;
+        pos++;
+        if ((byte & 0x80n) === 0n) {
+            return { value: result, offset: pos };
+        }
+        shift += 7n;
+    }
+    throw new Error('Varint ultrapassou o fim do buffer');
 }
 
-// Exemplo de e-mails iniciais
-const initialMail = [
-    generateMailItem(1, 'Bem-vindo!', 'Equipe Private Server', 'Bem-vindo ao servidor privado de Free Fire 2018! Aproveite a estadia.', Math.floor(Date.now() / 1000)),
-    generateMailItem(2, 'Dica do Dia', 'Sistema', 'Jogue com amigos para ganhar mais experiência.', Math.floor(Date.now() / 1000) - 3600)
-];
+/**
+ * Decodifica um buffer protobuf simples, retornando um objeto JavaScript.
+ * Suporta wire types: 0 (varint), 1 (64-bit), 2 (length-delimited), 5 (32-bit).
+ */
+function decodeProtobuf(buffer) {
+    const obj = {};
+    let offset = 0;
+    const view = buffer instanceof Buffer ? buffer : Buffer.from(buffer);
 
-// ----------------------------------------------------------------------------------
-// Codificação Protobuf simples (para respostas binárias)
-// ----------------------------------------------------------------------------------
+    while (offset < view.length) {
+        const tag = readVarint(view, offset);
+        offset = tag.offset;
+        const fieldNumber = Number(tag.value >> 3n);
+        const wireType = Number(tag.value & 0x07n);
+
+        if (wireType === 0) { // Varint
+            const varint = readVarint(view, offset);
+            obj[fieldNumber] = safeInt64(varint.value, 0);
+            offset = varint.offset;
+        } else if (wireType === 1) { // 64-bit (double ou fixed64)
+            if (offset + 8 > view.length) break;
+            const doubleVal = view.readDoubleLE(offset);
+            obj[fieldNumber] = doubleVal;
+            offset += 8;
+        } else if (wireType === 5) { // 32-bit (float ou fixed32)
+            if (offset + 4 > view.length) break;
+            const floatVal = view.readFloatLE(offset);
+            obj[fieldNumber] = floatVal;
+            offset += 4;
+        } else if (wireType === 2) { // Length-delimited
+            const lengthVarint = readVarint(view, offset);
+            const length = Number(lengthVarint.value);
+            offset = lengthVarint.offset;
+            if (offset + length > view.length) break;
+            const subBuffer = view.slice(offset, offset + length);
+            offset += length;
+            try {
+                const subObj = decodeProtobuf(subBuffer);
+                if (Object.keys(subObj).length === 0) {
+                    obj[fieldNumber] = subBuffer.toString('utf-8');
+                } else {
+                    obj[fieldNumber] = subObj;
+                }
+            } catch (e) {
+                obj[fieldNumber] = subBuffer.toString('utf-8');
+            }
+        } else {
+            // Tipo desconhecido – evita loop infinito
+            break;
+        }
+    }
+    return obj;
+}
+
+/**
+ * Converte BigInt ou number para um inteiro seguro (Number).
+ * Trata complemento de dois para 64 bits se necessário.
+ */
+function safeInt64(value, defaultValue) {
+    if (typeof value === 'bigint') {
+        if (value > 9223372036854775807n || value < -9223372036854775808n) {
+            const buf = Buffer.alloc(8);
+            buf.writeBigInt64LE(value);
+            return Number(buf.readBigInt64LE());
+        }
+        return Number(value);
+    }
+    if (typeof value === 'number') {
+        if (value > Number.MAX_SAFE_INTEGER || value < Number.MIN_SAFE_INTEGER) {
+            const buf = Buffer.alloc(8);
+            buf.writeBigInt64LE(BigInt(Math.floor(value)));
+            return Number(buf.readBigInt64LE());
+        }
+        return value;
+    }
+    return defaultValue;
+}
+
+/**
+ * Codifica um número como varint (unsigned LEB128) retornando Buffer.
+ */
 function encodeVarint(num) {
     const bytes = [];
     let value = BigInt(num);
@@ -307,6 +239,10 @@ function encodeVarint(num) {
     return Buffer.from(bytes);
 }
 
+/**
+ * Codifica um objeto JavaScript em formato Protobuf simples.
+ * Suporta números, strings, buffers, objetos e arrays (como submensagens repetidas).
+ */
 function encodeProtobuf(obj) {
     const chunks = [];
     const keys = Object.keys(obj);
@@ -342,7 +278,6 @@ function encodeProtobuf(obj) {
             chunks.push(value);
         } else if (typeof value === 'object' && value !== null) {
             if (Array.isArray(value)) {
-                // Para arrays, codificar como submensagens repetidas (campo com label repeated)
                 for (const item of value) {
                     const subMsg = encodeProtobuf(item);
                     const tag = (fieldNumber << 3) | 2;
@@ -362,37 +297,143 @@ function encodeProtobuf(obj) {
     return Buffer.concat(chunks);
 }
 
-// ----------------------------------------------------------------------------------
-// Função para geração de tokens simples (base64)
-// ----------------------------------------------------------------------------------
-function generateToken(type) {
-    const randomBytes = Buffer.from(Math.random().toString(36).substring(2, 15)).toString('base64');
-    return `${type}_${randomBytes}_${Date.now()}`;
+// ============================================================================
+// GERENCIAMENTO DE CORS E HEADERS CLOUDFLARE (conforme prints)
+// ============================================================================
+function setCors(res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 }
 
-// ----------------------------------------------------------------------------------
-// Tratamento centralizado de erros
-// ----------------------------------------------------------------------------------
-function handleError(res, error) {
-    console.error('Erro:', error.message);
-    const errorBody = JSON.stringify({ code: 500, message: 'Erro interno do servidor' });
-    res.writeHead(500, {
-        ...DEFAULT_HEADERS,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(errorBody)
+function removeVercelHeaders(res) {
+    const headersToRemove = [
+        'Access-Control-Allow-Origin',
+        'Content-Encoding',
+        'Transfer-Encoding',
+        'X-Vercel-Cache',
+        'X-Vercel-Id',
+        'X-Vercel-Execution-Region',
+        'X-Vercel-Edge-Region',
+        'X-Vercel-Proxy-Id',
+        'X-Vercel-Sec',
+        'X-Vercel-Worker',
+        'Cache-Control',
+        'CDN-Cache-Control',
+        'Vercel-CDN-Edge',
+        'Vercel-CDN-Origin',
+        'Vercel-Cache',
+        'Server',
+        'Via'
+    ];
+    headersToRemove.forEach(header => {
+        if (res.hasHeader(header)) {
+            res.removeHeader(header);
+        }
     });
-    res.end(errorBody);
 }
 
-// ----------------------------------------------------------------------------------
-// Criação do servidor HTTP
-// ----------------------------------------------------------------------------------
+/**
+ * Aplica os headers Cloudflare estranhos (exatamente como no print).
+ */
+function applyCloudflareHeaders(res, contentType, contentLength) {
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', contentLength);
+    res.setHeader('alt-svc', 'h3=":443"; ma=86400');
+    res.setHeader('cf-cache-status', 'DYNAMIC');
+    res.setHeader('CF-RAY', '9fe607862821941-001');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Nel', '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604500}');
+    res.setHeader('Report-To', '{"group":"cf-nel","max_age":604000,"endpoints":[{"url":"https://a.nel.cloudflare.co"}]}');
+    res.setHeader('Server', 'cloudflare');
+    res.setHeader('Server-Timing', 'cfCacheStatus;desc="DYNAMIC", cfEdge;dur=4, cfOrigin;dur=27');
+    res.setHeader('Date', new Date().toUTCString());
+}
+
+// ============================================================================
+// HELPERS DE RESPOSTA (utilizando headers cloudflare)
+// ============================================================================
+function jsonResponse(res, data, statusCode = 200) {
+    const body = JSON.stringify(data);
+    const buffer = Buffer.from(body, 'utf-8');
+    applyCloudflareHeaders(res, 'application/json; charset=utf-8', buffer.length);
+    res.writeHead(statusCode);
+    res.end(buffer);
+}
+
+function textResponse(res, text, statusCode = 200) {
+    const buffer = Buffer.from(text, 'utf-8');
+    applyCloudflareHeaders(res, 'text/plain; charset=utf-8', buffer.length);
+    res.writeHead(statusCode);
+    res.end(buffer);
+}
+
+function xmlResponse(res, xml, statusCode = 200) {
+    const buffer = Buffer.from(xml, 'utf-8');
+    applyCloudflareHeaders(res, 'application/xml; charset=utf-8', buffer.length);
+    res.writeHead(statusCode);
+    res.end(buffer);
+}
+
+function binaryResponse(res, buffer, statusCode = 200) {
+    applyCloudflareHeaders(res, 'application/octet-stream', buffer.length);
+    res.writeHead(statusCode);
+    res.end(buffer);
+}
+
+// ============================================================================
+// E-MAIL SIMPLES (substitui os blocos gigantes do Barbosa)
+// ============================================================================
+function generateMailItem(id, title, sender, message) {
+    return {
+        id,
+        title,
+        sender,
+        message,
+        received: Math.floor(Date.now() / 1000),
+        read: false,
+        hasAttachment: false,
+        attachmentItems: []
+    };
+}
+
+const initialMail = [
+    generateMailItem(1, 'Bem-vindo!', 'Equipe Private Server', 'Obrigado por jogar no servidor privado. Personagem padrão: Adam.'),
+    generateMailItem(2, 'Dica do Dia', 'Sistema', 'Use o chat para conhecer outros jogadores.'),
+    generateMailItem(3, 'Evento de Verão', 'Moderação', 'Participe do evento e ganhe Gold extra.')
+];
+
+// ============================================================================
+// PAINEL ADMIN
+// ============================================================================
+const ADMIN_USERNAME = 'dono133teste';
+const ADMIN_PASSWORD = 'six seven';
+let adminSessions = new Map();
+
+function verifyAdmin(authHeader) {
+    if (!authHeader) return false;
+    const token = authHeader.replace('Bearer ', '');
+    const session = adminSessions.get(token);
+    if (session && (Date.now() - session) < 3600000) { // 1 hora
+        return true;
+    }
+    return false;
+}
+
+// ============================================================================
+// GERAÇÃO DE TOKENS
+// ============================================================================
+function generateToken(prefix) {
+    return `${prefix}_${crypto.randomBytes(16).toString('hex')}_${Date.now()}`;
+}
+
+// ============================================================================
+// SERVIDOR HTTP
+// ============================================================================
 const server = http.createServer((req, res) => {
-    // Configura CORS manual
     setCors(res);
     removeVercelHeaders(res);
 
-    // Tratamento de requisições OPTIONS (preflight)
     if (req.method === 'OPTIONS') {
         res.writeHead(200, {
             'Content-Length': '0',
@@ -410,16 +451,16 @@ const server = http.createServer((req, res) => {
     const now = Math.floor(Date.now() / 1000);
 
     try {
-        // ------------------------------------------------------------------------------
-        // Rotas de versão
-        // ------------------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // VERSÃO 1.25.3
+        // ----------------------------------------------------------------------
         if (route === '/live/ver.php' || route === '/live/appstoreversioninfo') {
             return textResponse(res, '1.25.3');
         }
 
-        // ------------------------------------------------------------------------------
-        // Autenticação: token de convidado
-        // ------------------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // TOKEN DE CONVIDADO
+        // ----------------------------------------------------------------------
         if (route === '/oauth/guest/token/grant') {
             const accessToken = generateToken('acc');
             const tokenData = {
@@ -428,7 +469,7 @@ const server = http.createServer((req, res) => {
                 token_type: "Bearer",
                 expires_in: 86400,
                 openid: playerProgress.uid,
-                nickname: "Player",
+                nickname: playerProgress.nickname,
                 uid: playerProgress.uid,
                 account_id: playerProgress.uid,
                 user_id: parseInt(playerProgress.uid),
@@ -458,22 +499,24 @@ const server = http.createServer((req, res) => {
                 appstore: "googleplay",
                 device: "android",
                 platform: "android",
-                // Dados do personagem único
+                // Personagem único
                 character_id: 1,
                 character_name: "Adam",
                 character_skin_id: 0,
                 character_skin_name: "",
                 gold: playerProgress.gold,
-                level: playerProgress.level
+                level: playerProgress.level,
+                diamonds: playerProgress.diamonds,
+                extra: extraPlayerData,
+                friends: friendsList
             };
-            // Atualiza cache do token
             cache.set(accessToken, Object.assign({}, playerProgress));
             return jsonResponse(res, tokenData);
         }
 
-        // ------------------------------------------------------------------------------
-        // Registro de convidado (similar ao token grant)
-        // ------------------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // REGISTRO DE CONVIDADO
+        // ----------------------------------------------------------------------
         if (route === '/oauth/guest/register') {
             const accessToken = generateToken('acc');
             const registerData = {
@@ -482,7 +525,7 @@ const server = http.createServer((req, res) => {
                 token_type: "Bearer",
                 expires_in: 86400,
                 openid: playerProgress.uid,
-                nickname: "Player",
+                nickname: playerProgress.nickname,
                 uid: playerProgress.uid,
                 account_id: playerProgress.uid,
                 user_id: parseInt(playerProgress.uid),
@@ -491,7 +534,7 @@ const server = http.createServer((req, res) => {
                 server_time: now,
                 timestamp: now,
                 is_guest: true,
-                is_new_user: false,
+                is_new_user: true,
                 login_status: 1,
                 region: "BR",
                 lang: "pt-br",
@@ -517,14 +560,17 @@ const server = http.createServer((req, res) => {
                 character_skin_id: 0,
                 character_skin_name: "",
                 gold: playerProgress.gold,
-                level: playerProgress.level
+                level: playerProgress.level,
+                diamonds: playerProgress.diamonds,
+                extra: extraPlayerData,
+                friends: friendsList
             };
             return jsonResponse(res, registerData);
         }
 
-        // ------------------------------------------------------------------------------
-        // Rotas OAuth secundárias
-        // ------------------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // ROTAS OAUTH GENÉRICAS
+        // ----------------------------------------------------------------------
         const genericOauthRoutes = [
             '/oauth/login',
             '/oauth/logout',
@@ -537,16 +583,16 @@ const server = http.createServer((req, res) => {
             return jsonResponse(res, { code: 0, message: "SUCCESS" });
         }
 
-        // ------------------------------------------------------------------------------
-        // Localização
-        // ------------------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // LOCALIZAÇÃO
+        // ----------------------------------------------------------------------
         if (route.startsWith('/Localization/')) {
             return jsonResponse(res, {});
         }
 
-        // ------------------------------------------------------------------------------
-        // Configuração Facebook SDK
-        // ------------------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // FACEBOOK SDK
+        // ----------------------------------------------------------------------
         if (route === '/.json') {
             return jsonResponse(res, {
                 android_dialog_configs: {},
@@ -558,20 +604,19 @@ const server = http.createServer((req, res) => {
             });
         }
 
-        // ------------------------------------------------------------------------------
-        // crossdomain.xml
-        // ------------------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // CROSSDOMAIN.XML
+        // ----------------------------------------------------------------------
         if (route === '/crossdomain.xml') {
-            const xmlContent = '<?xml version="1.0"?><!DOCTYPE cross-domain-policy SYSTEM "http://www.macromedia.com/xml/dtds/cross-domain-policy.dtd"><cross-domain-policy><allow-access-from domain="*" to-ports="*"/><allow-http-request-headers-from domain="*" headers="*"/></cross-domain-policy>';
-            return xmlResponse(res, xmlContent);
+            const xml = '<?xml version="1.0"?><!DOCTYPE cross-domain-policy SYSTEM "http://www.macromedia.com/xml/dtds/cross-domain-policy.dtd"><cross-domain-policy><allow-access-from domain="*" to-ports="*"/><allow-http-request-headers-from domain="*" headers="*"/></cross-domain-policy>';
+            return xmlResponse(res, xml);
         }
 
-        // ------------------------------------------------------------------------------
-        // Endpoints de ranking e amigos (respostas binárias com protobuf)
-        // ------------------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // PROTOBUF ENDPOINTS
+        // ----------------------------------------------------------------------
         if (route === '/GetDailyRankingReward') {
-            // Resposta: mensagem vazia ou com uma estrutura simples
-            const protoObj = { 1: [] }; // Campo 1 com array vazio
+            const protoObj = { 1: [] };
             const buffer = encodeProtobuf(protoObj);
             return binaryResponse(res, buffer);
         }
@@ -588,11 +633,11 @@ const server = http.createServer((req, res) => {
             return binaryResponse(res, buffer);
         }
 
-        // ------------------------------------------------------------------------------
-        // Descrição de atividade (notícias)
-        // ------------------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // NOTÍCIAS (GetActivityDesc)
+        // ----------------------------------------------------------------------
         if (route === '/GetActivityDesc') {
-            const activityDesc = {
+            const activity = {
                 "1": [
                     {
                         id: "101",
@@ -626,12 +671,12 @@ const server = http.createServer((req, res) => {
                     highlight: true
                 }
             };
-            return jsonResponse(res, activityDesc);
+            return jsonResponse(res, activity);
         }
 
-        // ------------------------------------------------------------------------------
-        // Informações do app
-        // ------------------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // APP INFO
+        // ----------------------------------------------------------------------
         if (route === '/app/info/get') {
             const appInfo = {
                 version: "1.25.3",
@@ -654,9 +699,84 @@ const server = http.createServer((req, res) => {
             return jsonResponse(res, appInfo);
         }
 
-        // ------------------------------------------------------------------------------
-        // Catch-all: Configuração completa (merge da query com DEFAULT_SETTINGS)
-        // ------------------------------------------------------------------------------
+        // ----------------------------------------------------------------------
+        // ROTA OCULTA (bytes misteriosos)
+        // ----------------------------------------------------------------------
+        if (route === '/hidden/message') {
+            const buffer = Buffer.from(mysteriousBytes);
+            return binaryResponse(res, buffer);
+        }
+
+        // ----------------------------------------------------------------------
+        // PAINEL ADMIN (API)
+        // ----------------------------------------------------------------------
+        if (route === '/admin/login') {
+            if (req.method !== 'POST') {
+                res.writeHead(405);
+                return res.end('Method Not Allowed');
+            }
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const { username, password } = JSON.parse(body);
+                    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+                        const token = generateToken('adm');
+                        adminSessions.set(token, Date.now());
+                        return jsonResponse(res, { success: true, token });
+                    }
+                    return jsonResponse(res, { success: false, message: 'Credenciais inválidas' }, 401);
+                } catch (e) {
+                    return jsonResponse(res, { success: false, message: 'JSON inválido' }, 400);
+                }
+            });
+            return;
+        }
+
+        if (route === '/admin/update') {
+            if (req.method !== 'POST') {
+                res.writeHead(405);
+                return res.end('Method Not Allowed');
+            }
+            const auth = req.headers.authorization;
+            if (!verifyAdmin(auth)) {
+                return jsonResponse(res, { error: 'Não autorizado' }, 403);
+            }
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const data = JSON.parse(body);
+                    if (typeof data.gold === 'number') playerProgress.gold = data.gold;
+                    if (typeof data.level === 'number') playerProgress.level = data.level;
+                    if (typeof data.diamonds === 'number') playerProgress.diamonds = data.diamonds;
+                    if (typeof data.isBanned === 'boolean') playerProgress.isBanned = data.isBanned;
+                    if (typeof data.banReason === 'string') playerProgress.banReason = data.banReason;
+                    if (typeof data.nickname === 'string') playerProgress.nickname = data.nickname;
+                    return jsonResponse(res, { success: true, player: playerProgress });
+                } catch (e) {
+                    return jsonResponse(res, { success: false, message: 'Erro no JSON' }, 400);
+                }
+            });
+            return;
+        }
+
+        if (route === '/admin/status') {
+            const auth = req.headers.authorization;
+            if (!verifyAdmin(auth)) {
+                return jsonResponse(res, { error: 'Não autorizado' }, 403);
+            }
+            return jsonResponse(res, {
+                server: 'online',
+                players: 1,
+                uptime: process.uptime(),
+                playerProgress
+            });
+        }
+
+        // ----------------------------------------------------------------------
+        // CATCH-ALL: CONFIGURAÇÃO COMPLETA (merge query com DEFAULT)
+        // ----------------------------------------------------------------------
         const mergedConfig = {
             ...DEFAULT_SETTINGS,
             version: query.version || '1.25.3',
@@ -665,7 +785,7 @@ const server = http.createServer((req, res) => {
             appstore: query.appstore || 'googleplay',
             region: query.region || 'DEFAULT',
             account_id: query.account_id || playerProgress.uid,
-            nickname: query.nickname || 'Player',
+            nickname: query.nickname || playerProgress.nickname,
             session_key: query.session_key || generateToken('sess'),
             access_token: query.access_token || generateToken('acc'),
             ticket: query.ticket || generateToken('tick'),
@@ -673,6 +793,7 @@ const server = http.createServer((req, res) => {
             user_id: parseInt(query.user_id) || parseInt(playerProgress.uid),
             level: parseInt(query.level) || playerProgress.level,
             gold: parseInt(query.gold) || playerProgress.gold,
+            diamonds: parseInt(query.diamonds) || playerProgress.diamonds,
             lobby_ip: query.lobby_ip || '127.0.0.1',
             lobby_port: parseInt(query.lobby_port) || 60000,
             matchmake_ip: query.matchmake_ip || '127.0.0.1',
@@ -703,12 +824,13 @@ const server = http.createServer((req, res) => {
             character_list: [
                 { id: 1, name: 'Adam', skin_id: 0, skin_name: '', equipped: true, owned: true }
             ],
-            friends: [],
+            friends: friendsList,
             events: [],
             missions: [],
             achievements: [],
             mail: initialMail,
             notifications: [],
+            extra: extraPlayerData,
             config: {},
             features: {
                 ranked: false,
@@ -747,18 +869,22 @@ const server = http.createServer((req, res) => {
         return jsonResponse(res, mergedConfig);
 
     } catch (error) {
-        handleError(res, error);
+        const errorBody = JSON.stringify(DEFAULT_SETTINGS);
+        const errorBuffer = Buffer.from(errorBody, 'utf-8');
+        applyCloudflareHeaders(res, 'application/json; charset=utf-8', errorBuffer.length);
+        res.writeHead(500);
+        res.end(errorBuffer);
     }
 });
 
-// ----------------------------------------------------------------------------------
-// Inicialização do servidor
-// ----------------------------------------------------------------------------------
+// ============================================================================
+// INICIALIZAÇÃO
+// ============================================================================
 server.listen(PORT, () => {
     console.log(`Servidor privado rodando na porta ${PORT}`);
     console.log(`Personagem padrão: Adam (ID: 1)`);
-    console.log(`Persistência de dados (ouro, level) armazenada em memória.`);
-    console.log(`Firebase URL (mock): ${FIREBASE_PLAYER_URL}`);
+    console.log(`Painel admin: /admin/login com usuário "${ADMIN_USERNAME}"`);
+    console.log(`Versão alvo: 1.25.3`);
 });
 
 module.exports = server;
