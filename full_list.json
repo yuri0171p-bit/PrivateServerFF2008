@@ -1,1 +1,4 @@
-
+[
+  { "item_id": 101, "type": "character", "name": "Kelly", "skin_id": 101001, "skin_name": "Kelly - Speed Run" },
+  { "item_id": 201, "type": "weapon", "name": "M4A1", "skin_id": 201001, "skin_name": "M4A1 - Dragon" }
+]
