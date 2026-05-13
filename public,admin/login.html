@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Painel Admin</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      transition: background 0.3s, color 0.3s;
+    }
+    body.light {
+      background: #f5f5f5; color: #222;
+    }
+    body.dark {
+      background: #1a1a2e; color: #e0e0e0;
+    }
+    .login-box {
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(10px);
+      padding: 2rem;
+      border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      width: 300px;
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      border: 1px solid #aaa;
+      border-radius: 6px;
+      background: transparent;
+      color: inherit;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #4a6cf7;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover { background: #3b5de7; }
+    .erro { color: #ff6b6b; margin-top: 8px; }
+    .theme-toggle {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      cursor: pointer;
+      width: auto;
+      padding: 5px 10px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 50%;
+    }
+  </style>
+</head>
+<body class="light">
+  <button class="theme-toggle" onclick="alternarTema()">🌓</button>
+
+  <div class="login-box">
+    <h2>Painel Admin</h2>
+    <input type="text" id="username" placeholder="Usuário">
+    <input type="password" id="password" placeholder="Senha">
+    <button onclick="fazerLogin()">Entrar</button>
+    <p id="erro" class="erro"></p>
+  </div>
+
+  <script>
+    // Aplica tema salvo
+    (function() {
+      const tema = localStorage.getItem('tema') || 'light';
+      document.body.className = tema;
+    })();
+
+    function alternarTema() {
+      const novo = document.body.className === 'light' ? 'dark' : 'light';
+      document.body.className = novo;
+      localStorage.setItem('tema', novo);
+    }
+
+    async function fazerLogin() {
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+
+      const data = await res.json();
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+        window.location.href = '/dashboard.html';
+      } else {
+        document.getElementById('erro').textContent = data.erro || 'Credenciais inválidas';
+      }
+    }
+  </script>
+</body>
+  </html>
