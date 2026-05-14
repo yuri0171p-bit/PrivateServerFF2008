@@ -1,34 +1,3 @@
-/*
- * ===========================================================================
- * main.js - Servidor Privado Free Fire 1.25.3 (Winterlands 2018)
- * Clone educacional do Barbosa Server (VERSÃO SEM WEBSOCKET)
- * ===========================================================================
- * 
- * OBJETIVO: Simular os serviços de login, lobby, loja e partidas do Free Fire
- * utilizando apenas Node.js puro (módulos http, url, fs). 
- * 
- * MÓDULOS UTILIZADOS:
- *   - http     : servidor HTTP
- *   - url      : parse de URLs e query strings
- *   - fs       : leitura de arquivos JSON estáticos
- *   - path     : manipulação de caminhos de arquivos
- *   - crypto   : geração de tokens JWT e hash de senhas
- * 
- * PROIBIÇÕES: Não usar os módulos net (TCP), dgram (UDP) nem ws (WebSocket).
- * 
- * NOTA LEGAL: Este código é para fins exclusivamente educacionais e de pesquisa,
- * não devendo ser utilizado para violar os Termos de Serviço da Garena
- * ou para distribuir conteúdo protegido por direitos autorais.
- * ===========================================================================
- */
-
-'use strict';
-
-// ===========================================================================
-// SEÇÃO 1: IMPORTAÇÃO DE MÓDULOS E CONFIGURAÇÃO INICIAL
-// ===========================================================================
-
-// Módulos nativos do Node.js (nenhum módulo externo)
 const http = require('http');          // Servidor HTTP
 const url = require('url');            // Parse de URLs e query strings
 const fs = require('fs');              // Leitura de arquivos JSON estáticos
