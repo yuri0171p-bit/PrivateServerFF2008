@@ -20,7 +20,7 @@ const FIREBASE_URL = FIREBASE_PLAYER_URL;
 // Constantes do servidor de jogo
 const JWT_SECRET = 'barbosa-secret-key-2018-winterlands';  // Chave para assinar tokens JWT
 const SERVER_NAME = 'Barbosa Server 1.25.3';               // Nome do servidor
-const VERSION = '1.25.3';                                  // Versão suportada
+const VERSION = '1.43.0';                                  // Versão suportada
 const WINTERLANDS_BUILD = '20181201';                      // Build do Winterlands
 
 // ---------------------------------------------------------------------------
