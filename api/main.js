@@ -1,11 +1,39 @@
-const http = require('http');          // Servidor HTTP e eventos de upgrade
+/*
+ * ===========================================================================
+ * main.js - Servidor Privado Free Fire 1.25.3 (Winterlands 2018)
+ * Clone educacional do Barbosa Server (VERSÃO SEM WEBSOCKET)
+ * ===========================================================================
+ * 
+ * OBJETIVO: Simular os serviços de login, lobby, loja e partidas do Free Fire
+ * utilizando apenas Node.js puro (módulos http, url, fs). 
+ * 
+ * MÓDULOS UTILIZADOS:
+ *   - http     : servidor HTTP
+ *   - url      : parse de URLs e query strings
+ *   - fs       : leitura de arquivos JSON estáticos
+ *   - path     : manipulação de caminhos de arquivos
+ *   - crypto   : geração de tokens JWT e hash de senhas
+ * 
+ * PROIBIÇÕES: Não usar os módulos net (TCP), dgram (UDP) nem ws (WebSocket).
+ * 
+ * NOTA LEGAL: Este código é para fins exclusivamente educacionais e de pesquisa,
+ * não devendo ser utilizado para violar os Termos de Serviço da Garena
+ * ou para distribuir conteúdo protegido por direitos autorais.
+ * ===========================================================================
+ */
+
+'use strict';
+
+// ===========================================================================
+// SEÇÃO 1: IMPORTAÇÃO DE MÓDULOS E CONFIGURAÇÃO INICIAL
+// ===========================================================================
+
+// Módulos nativos do Node.js (nenhum módulo externo)
+const http = require('http');          // Servidor HTTP
 const url = require('url');            // Parse de URLs e query strings
 const fs = require('fs');              // Leitura de arquivos JSON estáticos
 const path = require('path');          // Manipulação de caminhos de arquivos
 const crypto = require('crypto');      // Geração de tokens JWT e hash de senhas
-
-// Módulo WebSocket (opera sobre HTTP, permitido pelo escopo)
-const WebSocket = require('ws');
 
 // ---------------------------------------------------------------------------
 // Constantes do ambiente (Firebase e outras, mantidas do código original)
@@ -33,11 +61,10 @@ const cache = new Map();                // Cache genérico (tokens, respostas te
 const CACHE_TTL = 60 * 1000;           // Tempo de vida do cache (60 segundos)
 
 const users = new Map();                // Contas de usuário (simuladas) - userId -> userData
-const connectedClients = new Map();     // Clientes WebSocket conectados - ws -> userData
-const matchmakingQueue = {              // Filas de matchmaking
-  solo: [],                             // Jogadores solo
-  duo: [],                              // Duplas (pré-formadas ou aleatórias)
-  squad: []                             // Esquadrões (pré-formados ou aleatórios)
+const matchmakingQueue = {              // Filas de matchmaking (apenas lógica simulada, sem WS)
+  solo: [],
+  duo: [],
+  squad: []
 };
 const activeRooms = new Map();          // Salas de partida ativas - roomId -> roomData
 const playerInventories = new Map();    // Inventário dos jogadores - userId -> items[]
@@ -100,9 +127,9 @@ const DEFAULT_SETTINGS = {
     is_server_open: true,
     maintenance_announcement: 'Este projeto não faz afiliação com a Garena.',
     remote_option_version: '1.0.0',
-    remote_version: '1.25.3',
+    remote_version: '1.43.0',
     server_url: 'https://versionscommon.barbosasmobile.com/live/',
-    version: '1.25.3',
+    version: '1.43.3',
     lang: 'pt-br',
     device: 'android',
     appstore: 'googleplay',
@@ -206,6 +233,461 @@ if (!playerInventories.has('99999999')) {
     { type: 'consumable', id: 8, quantity: 5 }       // 5 Med Kits
   ]);
 }
+
+// ===========================================================================
+// SEÇÃO 2.5: PACOTE DE IDIOMAS (LOCALIZATION)
+// ===========================================================================
+
+/**
+ * Dicionários de tradução padrão para vários idiomas.
+ * As chaves são os códigos de idioma (ex: 'pt-br', 'en', 'es').
+ * Cada idioma contém um mapeamento de chaves de texto para a tradução.
+ * 
+ * Esses dados podem ser substituídos por arquivos JSON na pasta data/ 
+ * (ex: data/pt-br.json, data/en.json).
+ */
+const defaultLanguages = {
+  'pt-br': {
+    // Lobby
+    'LOBBY_PLAY': 'JOGAR',
+    'LOBBY_STORE': 'LOJA',
+    'LOBBY_SETTINGS': 'CONFIGURAÇÕES',
+    'LOBBY_MAIL': 'CORREIO',
+    'LOBBY_FRIENDS': 'AMIGOS',
+    'LOBBY_MISSIONS': 'MISSÕES',
+    'LOBBY_EVENTS': 'EVENTOS',
+    'LOBBY_RANKED': 'RANQUEADO',
+    'LOBBY_CLAN': 'CLÃ',
+    'LOBBY_BATTLEPASS': 'PASSE DE BATALHA',
+    'LOBBY_WEAPON_ROYALE': 'ROYALE DE ARMAS',
+    'LOBBY_LUCK_ROYALE': 'ROYALE DA SORTE',
+    'LOBBY_PROFILE': 'PERFIL',
+    'LOBBY_INVENTORY': 'INVENTÁRIO',
+    // Personagens
+    'CHARACTER_ADAM': 'Adam',
+    'CHARACTER_ADAM_DESC': 'O primeiro personagem.',
+    'CHARACTER_KELLY': 'Kelly',
+    'CHARACTER_KELLY_DESC': 'Uma velocista profissional.',
+    'CHARACTER_ANDREW': 'Andrew',
+    'CHARACTER_ANDREW_DESC': 'Especialista em reparos de colete.',
+    'CHARACTER_MOCO': 'Moco',
+    'CHARACTER_MOCO_DESC': 'Uma hacker excepcional.',
+    'CHARACTER_MAXIM': 'Maxim',
+    'CHARACTER_MAXIM_DESC': 'Come rápido e se recupera.',
+    // Armas
+    'WEAPON_M4A1': 'M4A1',
+    'WEAPON_AK47': 'AK47',
+    'WEAPON_MP40': 'MP40',
+    'WEAPON_AWM': 'AWM',
+    'WEAPON_M1887': 'M1887',
+    'WEAPON_SCAR': 'SCAR',
+    'WEAPON_GRENADE': 'Granada',
+    'WEAPON_MEDKIT': 'Kit Médico',
+    // Modos de jogo
+    'MODE_SOLO': 'Solo',
+    'MODE_DUO': 'Dupla',
+    'MODE_SQUAD': 'Esquadrão',
+    // Loja
+    'SHOP_BUY': 'COMPRAR',
+    'SHOP_EQUIP': 'EQUIPAR',
+    'SHOP_PRICE': 'Preço',
+    'SHOP_OWNED': 'ADQUIRIDO',
+    'SHOP_NOT_ENOUGH_GOLD': 'Gold insuficiente!',
+    'SHOP_PURCHASE_SUCCESS': 'Compra realizada com sucesso!',
+    // Matchmaking
+    'MATCHMAKING_SEARCHING': 'Procurando partida...',
+    'MATCHMAKING_FOUND': 'Partida encontrada!',
+    'MATCHMAKING_CANCEL': 'Cancelar',
+    'MATCHMAKING_QUEUE_JOINED': 'Você entrou na fila.',
+    // Partida
+    'MATCH_START': 'A partida vai começar!',
+    'MATCH_END': 'Partida finalizada!',
+    'MATCH_WINNER': 'Vencedor',
+    'MATCH_KILLS': 'Eliminações',
+    'MATCH_DAMAGE': 'Dano',
+    'MATCH_REWARDS': 'Recompensas',
+    // Geral
+    'GENERAL_OK': 'OK',
+    'GENERAL_CANCEL': 'CANCELAR',
+    'GENERAL_CONFIRM': 'CONFIRMAR',
+    'GENERAL_BACK': 'VOLTAR',
+    'GENERAL_SETTINGS': 'CONFIGURAÇÕES',
+    'GENERAL_LANGUAGE': 'IDIOMA',
+    'GENERAL_GRAPHICS': 'GRÁFICOS',
+    'GENERAL_SENSITIVITY': 'SENSIBILIDADE',
+    'GENERAL_AUDIO': 'ÁUDIO',
+    'GENERAL_CONTROLS': 'CONTROLES',
+    // Autenticação
+    'AUTH_LOGIN': 'ENTRAR',
+    'AUTH_LOGOUT': 'SAIR',
+    'AUTH_GUEST': 'CONVIDADO',
+    'AUTH_REGISTER': 'REGISTRAR',
+    'AUTH_FORGOT_PASSWORD': 'ESQUECEU A SENHA?',
+    // Eventos
+    'EVENT_SUMMER_TRAINING': 'Treinamento de Verão',
+    'EVENT_ADAM_CHALLENGE': 'Desafio do Adam',
+    'EVENT_DAILY_MISSIONS': 'Missões Diárias',
+    // Notificações
+    'NOTIF_MAIL_RECEIVED': 'Você recebeu um novo e-mail.',
+    'NOTIF_FRIEND_REQUEST': 'Pedido de amizade recebido.',
+    'NOTIF_REWARD_CLAIMED': 'Recompensa resgatada!',
+    // Sistema
+    'SYS_SERVER_ONLINE': 'Servidor online',
+    'SYS_MAINTENANCE': 'Servidor em manutenção',
+    'SYS_VERSION': 'Versão',
+    'SYS_REGION': 'Região'
+  },
+  'en': {
+    'LOBBY_PLAY': 'PLAY',
+    'LOBBY_STORE': 'STORE',
+    'LOBBY_SETTINGS': 'SETTINGS',
+    'LOBBY_MAIL': 'MAIL',
+    'LOBBY_FRIENDS': 'FRIENDS',
+    'LOBBY_MISSIONS': 'MISSIONS',
+    'LOBBY_EVENTS': 'EVENTS',
+    'LOBBY_RANKED': 'RANKED',
+    'LOBBY_CLAN': 'CLAN',
+    'LOBBY_BATTLEPASS': 'BATTLE PASS',
+    'LOBBY_WEAPON_ROYALE': 'WEAPON ROYALE',
+    'LOBBY_LUCK_ROYALE': 'LUCK ROYALE',
+    'LOBBY_PROFILE': 'PROFILE',
+    'LOBBY_INVENTORY': 'INVENTORY',
+    'CHARACTER_ADAM': 'Adam',
+    'CHARACTER_ADAM_DESC': 'The original survivor.',
+    'CHARACTER_KELLY': 'Kelly',
+    'CHARACTER_KELLY_DESC': 'A professional sprinter.',
+    'CHARACTER_ANDREW': 'Andrew',
+    'CHARACTER_ANDREW_DESC': 'Armor repair specialist.',
+    'CHARACTER_MOCO': 'Moco',
+    'CHARACTER_MOCO_DESC': 'An outstanding hacker.',
+    'CHARACTER_MAXIM': 'Maxim',
+    'CHARACTER_MAXIM_DESC': 'Eats fast and recovers quickly.',
+    'WEAPON_M4A1': 'M4A1',
+    'WEAPON_AK47': 'AK47',
+    'WEAPON_MP40': 'MP40',
+    'WEAPON_AWM': 'AWM',
+    'WEAPON_M1887': 'M1887',
+    'WEAPON_SCAR': 'SCAR',
+    'WEAPON_GRENADE': 'Grenade',
+    'WEAPON_MEDKIT': 'Med Kit',
+    'MODE_SOLO': 'Solo',
+    'MODE_DUO': 'Duo',
+    'MODE_SQUAD': 'Squad',
+    'SHOP_BUY': 'BUY',
+    'SHOP_EQUIP': 'EQUIP',
+    'SHOP_PRICE': 'Price',
+    'SHOP_OWNED': 'OWNED',
+    'SHOP_NOT_ENOUGH_GOLD': 'Not enough gold!',
+    'SHOP_PURCHASE_SUCCESS': 'Purchase successful!',
+    'MATCHMAKING_SEARCHING': 'Searching for a match...',
+    'MATCHMAKING_FOUND': 'Match found!',
+    'MATCHMAKING_CANCEL': 'Cancel',
+    'MATCHMAKING_QUEUE_JOINED': 'You joined the queue.',
+    'MATCH_START': 'The match is about to start!',
+    'MATCH_END': 'Match ended!',
+    'MATCH_WINNER': 'Winner',
+    'MATCH_KILLS': 'Kills',
+    'MATCH_DAMAGE': 'Damage',
+    'MATCH_REWARDS': 'Rewards',
+    'GENERAL_OK': 'OK',
+    'GENERAL_CANCEL': 'CANCEL',
+    'GENERAL_CONFIRM': 'CONFIRM',
+    'GENERAL_BACK': 'BACK',
+    'GENERAL_SETTINGS': 'SETTINGS',
+    'GENERAL_LANGUAGE': 'LANGUAGE',
+    'GENERAL_GRAPHICS': 'GRAPHICS',
+    'GENERAL_SENSITIVITY': 'SENSITIVITY',
+    'GENERAL_AUDIO': 'AUDIO',
+    'GENERAL_CONTROLS': 'CONTROLS',
+    'AUTH_LOGIN': 'LOGIN',
+    'AUTH_LOGOUT': 'LOGOUT',
+    'AUTH_GUEST': 'GUEST',
+    'AUTH_REGISTER': 'REGISTER',
+    'AUTH_FORGOT_PASSWORD': 'FORGOT PASSWORD?',
+    'EVENT_SUMMER_TRAINING': 'Summer Training',
+    'EVENT_ADAM_CHALLENGE': 'Adam Challenge',
+    'EVENT_DAILY_MISSIONS': 'Daily Missions',
+    'NOTIF_MAIL_RECEIVED': 'You have received a new mail.',
+    'NOTIF_FRIEND_REQUEST': 'Friend request received.',
+    'NOTIF_REWARD_CLAIMED': 'Reward claimed!',
+    'SYS_SERVER_ONLINE': 'Server online',
+    'SYS_MAINTENANCE': 'Server under maintenance',
+    'SYS_VERSION': 'Version',
+    'SYS_REGION': 'Region'
+  },
+  'es': {
+    'LOBBY_PLAY': 'JUGAR',
+    'LOBBY_STORE': 'TIENDA',
+    'LOBBY_SETTINGS': 'CONFIGURACIÓN',
+    'LOBBY_MAIL': 'CORREO',
+    'LOBBY_FRIENDS': 'AMIGOS',
+    'LOBBY_MISSIONS': 'MISIONES',
+    'LOBBY_EVENTS': 'EVENTOS',
+    'LOBBY_RANKED': 'CLASIFICADO',
+    'LOBBY_CLAN': 'CLAN',
+    'LOBBY_BATTLEPASS': 'PASE DE BATALLA',
+    'LOBBY_WEAPON_ROYALE': 'ROYALE DE ARMAS',
+    'LOBBY_LUCK_ROYALE': 'ROYALE DE SUERTE',
+    'LOBBY_PROFILE': 'PERFIL',
+    'LOBBY_INVENTORY': 'INVENTARIO',
+    'CHARACTER_ADAM': 'Adam',
+    'CHARACTER_ADAM_DESC': 'El primer sobreviviente.',
+    'CHARACTER_KELLY': 'Kelly',
+    'CHARACTER_KELLY_DESC': 'Una velocista profesional.',
+    'CHARACTER_ANDREW': 'Andrew',
+    'CHARACTER_ANDREW_DESC': 'Especialista en reparación de chalecos.',
+    'CHARACTER_MOCO': 'Moco',
+    'CHARACTER_MOCO_DESC': 'Una hacker sobresaliente.',
+    'CHARACTER_MAXIM': 'Maxim',
+    'CHARACTER_MAXIM_DESC': 'Come rápido y se recupera.',
+    'WEAPON_M4A1': 'M4A1',
+    'WEAPON_AK47': 'AK47',
+    'WEAPON_MP40': 'MP40',
+    'WEAPON_AWM': 'AWM',
+    'WEAPON_M1887': 'M1887',
+    'WEAPON_SCAR': 'SCAR',
+    'WEAPON_GRENADE': 'Granada',
+    'WEAPON_MEDKIT': 'Botiquín',
+    'MODE_SOLO': 'Solitario',
+    'MODE_DUO': 'Dúo',
+    'MODE_SQUAD': 'Escuadrón',
+    'SHOP_BUY': 'COMPRAR',
+    'SHOP_EQUIP': 'EQUIPAR',
+    'SHOP_PRICE': 'Precio',
+    'SHOP_OWNED': 'ADQUIRIDO',
+    'SHOP_NOT_ENOUGH_GOLD': '¡Oro insuficiente!',
+    'SHOP_PURCHASE_SUCCESS': '¡Compra exitosa!',
+    'MATCHMAKING_SEARCHING': 'Buscando partida...',
+    'MATCHMAKING_FOUND': '¡Partida encontrada!',
+    'MATCHMAKING_CANCEL': 'Cancelar',
+    'MATCHMAKING_QUEUE_JOINED': 'Entraste en la cola.',
+    'MATCH_START': '¡La partida va a comenzar!',
+    'MATCH_END': '¡Partida terminada!',
+    'MATCH_WINNER': 'Ganador',
+    'MATCH_KILLS': 'Eliminaciones',
+    'MATCH_DAMAGE': 'Daño',
+    'MATCH_REWARDS': 'Recompensas',
+    'GENERAL_OK': 'OK',
+    'GENERAL_CANCEL': 'CANCELAR',
+    'GENERAL_CONFIRM': 'CONFIRMAR',
+    'GENERAL_BACK': 'VOLVER',
+    'GENERAL_SETTINGS': 'CONFIGURACIÓN',
+    'GENERAL_LANGUAGE': 'IDIOMA',
+    'GENERAL_GRAPHICS': 'GRÁFICOS',
+    'GENERAL_SENSITIVITY': 'SENSIBILIDAD',
+    'GENERAL_AUDIO': 'AUDIO',
+    'GENERAL_CONTROLS': 'CONTROLES',
+    'AUTH_LOGIN': 'INICIAR SESIÓN',
+    'AUTH_LOGOUT': 'CERRAR SESIÓN',
+    'AUTH_GUEST': 'INVITADO',
+    'AUTH_REGISTER': 'REGISTRARSE',
+    'AUTH_FORGOT_PASSWORD': '¿OLVIDASTE LA CONTRASEÑA?',
+    'EVENT_SUMMER_TRAINING': 'Entrenamiento de Verano',
+    'EVENT_ADAM_CHALLENGE': 'Desafío de Adam',
+    'EVENT_DAILY_MISSIONS': 'Misiones Diarias',
+    'NOTIF_MAIL_RECEIVED': 'Has recibido un nuevo correo.',
+    'NOTIF_FRIEND_REQUEST': 'Solicitud de amistad recibida.',
+    'NOTIF_REWARD_CLAIMED': '¡Recompensa reclamada!',
+    'SYS_SERVER_ONLINE': 'Servidor en línea',
+    'SYS_MAINTENANCE': 'Servidor en mantenimiento',
+    'SYS_VERSION': 'Versión',
+    'SYS_REGION': 'Región'
+  },
+  'id': {
+    'LOBBY_PLAY': 'MAIN',
+    'LOBBY_STORE': 'TOKO',
+    'LOBBY_SETTINGS': 'PENGATURAN',
+    'LOBBY_MAIL': 'SURAT',
+    'LOBBY_FRIENDS': 'TEMAN',
+    'LOBBY_MISSIONS': 'MISI',
+    'LOBBY_EVENTS': 'ACARA',
+    'LOBBY_RANKED': 'PERINGKAT',
+    'LOBBY_CLAN': 'KLEN',
+    'LOBBY_BATTLEPASS': 'BATTLE PASS',
+    'LOBBY_WEAPON_ROYALE': 'ROYALE SENJATA',
+    'LOBBY_LUCK_ROYALE': 'ROYALE KEBERUNTUNGAN',
+    'LOBBY_PROFILE': 'PROFIL',
+    'LOBBY_INVENTORY': 'INVENTARIS',
+    'CHARACTER_ADAM': 'Adam',
+    'CHARACTER_ADAM_DESC': 'Penyintas pertama.',
+    'CHARACTER_KELLY': 'Kelly',
+    'CHARACTER_KELLY_DESC': 'Pelari cepat profesional.',
+    'CHARACTER_ANDREW': 'Andrew',
+    'CHARACTER_ANDREW_DESC': 'Spesialis perbaikan rompi.',
+    'CHARACTER_MOCO': 'Moco',
+    'CHARACTER_MOCO_DESC': 'Hacker yang luar biasa.',
+    'CHARACTER_MAXIM': 'Maxim',
+    'CHARACTER_MAXIM_DESC': 'Makan cepat dan pulih dengan cepat.',
+    'WEAPON_M4A1': 'M4A1',
+    'WEAPON_AK47': 'AK47',
+    'WEAPON_MP40': 'MP40',
+    'WEAPON_AWM': 'AWM',
+    'WEAPON_M1887': 'M1887',
+    'WEAPON_SCAR': 'SCAR',
+    'WEAPON_GRENADE': 'Granat',
+    'WEAPON_MEDKIT': 'Kit Medis',
+    'MODE_SOLO': 'Solo',
+    'MODE_DUO': 'Duo',
+    'MODE_SQUAD': 'Skuad',
+    'SHOP_BUY': 'BELI',
+    'SHOP_EQUIP': 'PAKAI',
+    'SHOP_PRICE': 'Harga',
+    'SHOP_OWNED': 'DIMILIKI',
+    'SHOP_NOT_ENOUGH_GOLD': 'Emas tidak cukup!',
+    'SHOP_PURCHASE_SUCCESS': 'Pembelian berhasil!',
+    'MATCHMAKING_SEARCHING': 'Mencari pertandingan...',
+    'MATCHMAKING_FOUND': 'Pertandingan ditemukan!',
+    'MATCHMAKING_CANCEL': 'Batal',
+    'MATCHMAKING_QUEUE_JOINED': 'Anda masuk antrean.',
+    'MATCH_START': 'Pertandingan akan dimulai!',
+    'MATCH_END': 'Pertandingan selesai!',
+    'MATCH_WINNER': 'Pemenang',
+    'MATCH_KILLS': 'Eliminasi',
+    'MATCH_DAMAGE': 'Kerusakan',
+    'MATCH_REWARDS': 'Hadiah',
+    'GENERAL_OK': 'OK',
+    'GENERAL_CANCEL': 'BATAL',
+    'GENERAL_CONFIRM': 'KONFIRMASI',
+    'GENERAL_BACK': 'KEMBALI',
+    'GENERAL_SETTINGS': 'PENGATURAN',
+    'GENERAL_LANGUAGE': 'BAHASA',
+    'GENERAL_GRAPHICS': 'GRAFIS',
+    'GENERAL_SENSITIVITY': 'SENSITIVITAS',
+    'GENERAL_AUDIO': 'AUDIO',
+    'GENERAL_CONTROLS': 'KONTROL',
+    'AUTH_LOGIN': 'MASUK',
+    'AUTH_LOGOUT': 'KELUAR',
+    'AUTH_GUEST': 'TAMU',
+    'AUTH_REGISTER': 'DAFTAR',
+    'AUTH_FORGOT_PASSWORD': 'LUPA KATA SANDI?',
+    'EVENT_SUMMER_TRAINING': 'Latihan Musim Panas',
+    'EVENT_ADAM_CHALLENGE': 'Tantangan Adam',
+    'EVENT_DAILY_MISSIONS': 'Misi Harian',
+    'NOTIF_MAIL_RECEIVED': 'Anda menerima surat baru.',
+    'NOTIF_FRIEND_REQUEST': 'Permintaan pertemanan diterima.',
+    'NOTIF_REWARD_CLAIMED': 'Hadiah diklaim!',
+    'SYS_SERVER_ONLINE': 'Server online',
+    'SYS_MAINTENANCE': 'Server dalam pemeliharaan',
+    'SYS_VERSION': 'Versi',
+    'SYS_REGION': 'Wilayah'
+  },
+  'th': {
+    'LOBBY_PLAY': 'เล่น',
+    'LOBBY_STORE': 'ร้านค้า',
+    'LOBBY_SETTINGS': 'ตั้งค่า',
+    'LOBBY_MAIL': 'จดหมาย',
+    'LOBBY_FRIENDS': 'เพื่อน',
+    'LOBBY_MISSIONS': 'ภารกิจ',
+    'LOBBY_EVENTS': 'กิจกรรม',
+    'LOBBY_RANKED': 'จัดอันดับ',
+    'LOBBY_CLAN': 'แคลน',
+    'LOBBY_BATTLEPASS': 'BATTLE PASS',
+    'LOBBY_WEAPON_ROYALE': 'ROYALE อาวุธ',
+    'LOBBY_LUCK_ROYALE': 'ROYALE โชคดี',
+    'LOBBY_PROFILE': 'โปรไฟล์',
+    'LOBBY_INVENTORY': 'กระเป๋า',
+    'CHARACTER_ADAM': 'อดัม',
+    'CHARACTER_ADAM_DESC': 'ผู้รอดชีวิตคนแรก',
+    'CHARACTER_KELLY': 'เคลลี่',
+    'CHARACTER_KELLY_DESC': 'นักวิ่งมืออาชีพ',
+    'CHARACTER_ANDREW': 'แอนดรูว์',
+    'CHARACTER_ANDREW_DESC': 'ผู้เชี่ยวชาญการซ่อมเกราะ',
+    'CHARACTER_MOCO': 'โมโค',
+    'CHARACTER_MOCO_DESC': 'แฮกเกอร์ที่ยอดเยี่ยม',
+    'CHARACTER_MAXIM': 'แม็กซิม',
+    'CHARACTER_MAXIM_DESC': 'กินเร็วและฟื้นตัวอย่างรวดเร็ว',
+    'WEAPON_M4A1': 'M4A1',
+    'WEAPON_AK47': 'AK47',
+    'WEAPON_MP40': 'MP40',
+    'WEAPON_AWM': 'AWM',
+    'WEAPON_M1887': 'M1887',
+    'WEAPON_SCAR': 'SCAR',
+    'WEAPON_GRENADE': 'ระเบิด',
+    'WEAPON_MEDKIT': 'ชุดแพทย์',
+    'MODE_SOLO': 'เดี่ยว',
+    'MODE_DUO': 'คู่',
+    'MODE_SQUAD': 'ทีม',
+    'SHOP_BUY': 'ซื้อ',
+    'SHOP_EQUIP': 'สวมใส่',
+    'SHOP_PRICE': 'ราคา',
+    'SHOP_OWNED': 'เป็นเจ้าของ',
+    'SHOP_NOT_ENOUGH_GOLD': 'ทองไม่พอ!',
+    'SHOP_PURCHASE_SUCCESS': 'ซื้อสำเร็จ!',
+    'MATCHMAKING_SEARCHING': 'กำลังค้นหาการแข่งขัน...',
+    'MATCHMAKING_FOUND': 'พบการแข่งขัน!',
+    'MATCHMAKING_CANCEL': 'ยกเลิก',
+    'MATCHMAKING_QUEUE_JOINED': 'คุณเข้าคิวแล้ว',
+    'MATCH_START': 'การแข่งขันกำลังจะเริ่ม!',
+    'MATCH_END': 'การแข่งขันสิ้นสุด!',
+    'MATCH_WINNER': 'ผู้ชนะ',
+    'MATCH_KILLS': 'สังหาร',
+    'MATCH_DAMAGE': 'ความเสียหาย',
+    'MATCH_REWARDS': 'รางวัล',
+    'GENERAL_OK': 'ตกลง',
+    'GENERAL_CANCEL': 'ยกเลิก',
+    'GENERAL_CONFIRM': 'ยืนยัน',
+    'GENERAL_BACK': 'กลับ',
+    'GENERAL_SETTINGS': 'ตั้งค่า',
+    'GENERAL_LANGUAGE': 'ภาษา',
+    'GENERAL_GRAPHICS': 'กราฟิก',
+    'GENERAL_SENSITIVITY': 'ความไว',
+    'GENERAL_AUDIO': 'เสียง',
+    'GENERAL_CONTROLS': 'ควบคุม',
+    'AUTH_LOGIN': 'เข้าสู่ระบบ',
+    'AUTH_LOGOUT': 'ออกจากระบบ',
+    'AUTH_GUEST': 'ผู้เล่นทั่วไป',
+    'AUTH_REGISTER': 'ลงทะเบียน',
+    'AUTH_FORGOT_PASSWORD': 'ลืมรหัสผ่าน?',
+    'EVENT_SUMMER_TRAINING': 'การฝึกฤดูร้อน',
+    'EVENT_ADAM_CHALLENGE': 'ความท้าทายของอดัม',
+    'EVENT_DAILY_MISSIONS': 'ภารกิจรายวัน',
+    'NOTIF_MAIL_RECEIVED': 'คุณได้รับจดหมายใหม่',
+    'NOTIF_FRIEND_REQUEST': 'ได้รับคำขอเป็นเพื่อน',
+    'NOTIF_REWARD_CLAIMED': 'รับรางวัลแล้ว!',
+    'SYS_SERVER_ONLINE': 'เซิร์ฟเวอร์ออนไลน์',
+    'SYS_MAINTENANCE': 'เซิร์ฟเวอร์กำลังบำรุงรักษา',
+    'SYS_VERSION': 'เวอร์ชัน',
+    'SYS_REGION': 'ภูมิภาค'
+  }
+};
+
+/**
+ * Carrega os idiomas disponíveis.
+ * Para cada código de idioma, tenta carregar um arquivo JSON (ex: data/pt-br.json).
+ * Se o arquivo não existir, usa o dicionário padrão definido em defaultLanguages.
+ * O idioma 'pt-br' sempre estará disponível como fallback.
+ * 
+ * @returns {object} Objeto com todos os idiomas carregados
+ */
+function loadLanguages() {
+  const languages = {};
+  
+  // Lista de idiomas suportados (pode ser expandida)
+  const supportedLangs = Object.keys(defaultLanguages);
+  
+  for (const lang of supportedLangs) {
+    // Tenta carregar o arquivo JSON específico do idioma
+    const fileData = loadJSON(`${lang}.json`, null);
+    if (fileData && typeof fileData === 'object' && Object.keys(fileData).length > 0) {
+      languages[lang] = fileData;
+      console.log(`[IDIOMA] ${lang} carregado do arquivo.`);
+    } else {
+      // Usa o dicionário padrão
+      languages[lang] = defaultLanguages[lang] || {};
+      console.log(`[IDIOMA] ${lang} carregado do padrão interno.`);
+    }
+  }
+  
+  // Garante que pt-br existe como fallback
+  if (!languages['pt-br'] || Object.keys(languages['pt-br']).length === 0) {
+    languages['pt-br'] = defaultLanguages['pt-br'];
+  }
+  
+  return languages;
+}
+
+// Carrega todos os idiomas
+const languages = loadLanguages();
 
 // ===========================================================================
 // SEÇÃO 3: FUNÇÕES AUXILIARES DE PROTOBUF (mantidas do código original)
@@ -586,7 +1068,7 @@ function verifyJWT(token) {
 }
 
 // ===========================================================================
-// SEÇÃO 7: LÓGICA DE LOBBY E MATCHMAKING
+// SEÇÃO 7: LÓGICA DE MATCHMAKING SIMULADO (agora sem notificações WebSocket)
 // ===========================================================================
 
 /**
@@ -611,8 +1093,7 @@ function addToMatchmaking(userId, mode, level) {
     matchmakingQueue[mode].push({
         userId,
         level,
-        joinedAt: Date.now(),
-        ws: null // Será preenchido quando o WebSocket estiver associado
+        joinedAt: Date.now()
     });
     
     console.log(`[MATCHMAKING] Jogador ${userId} entrou na fila ${mode}. Fila: ${matchmakingQueue[mode].length} jogadores.`);
@@ -625,26 +1106,24 @@ function addToMatchmaking(userId, mode, level) {
 
 /**
  * Tenta formar uma partida com os jogadores na fila.
- * Para simplificar, usa um limite de 2 jogadores para solo, 4 para duo (2 duplas) e 8 para squad (2 esquadrões).
+ * Apenas cria a sala, sem notificar os jogadores (não há WebSocket).
  * 
  * @param {string} mode - Modalidade
  */
 function tryFormMatch(mode) {
     let requiredPlayers;
     switch (mode) {
-        case 'solo': requiredPlayers = 2; break;   // Mínimo de 2 para teste
-        case 'duo': requiredPlayers = 4; break;    // 2 duplas
-        case 'squad': requiredPlayers = 8; break;  // 2 esquadrões
+        case 'solo': requiredPlayers = 2; break;
+        case 'duo': requiredPlayers = 4; break;
+        case 'squad': requiredPlayers = 8; break;
         default: return;
     }
     
     const queue = matchmakingQueue[mode];
     if (queue.length >= requiredPlayers) {
-        // Pega os primeiros jogadores da fila
         const players = queue.splice(0, requiredPlayers);
         const roomId = generateToken('room');
         
-        // Cria a sala de partida
         activeRooms.set(roomId, {
             id: roomId,
             mode,
@@ -657,25 +1136,12 @@ function tryFormMatch(mode) {
                 position: { x: Math.random() * 1000, y: 0, z: Math.random() * 1000 },
                 health: 100
             })),
-            state: 'starting', // starting, playing, ended
+            state: 'starting',
             startTime: Date.now(),
             endTime: null
         });
         
-        console.log(`[MATCHMAKING] Partida ${roomId} criada com ${players.length} jogadores (${mode}).`);
-        
-        // Notifica os jogadores (se estiverem conectados via WebSocket)
-        players.forEach(p => {
-            const client = connectedClients.get(p.userId);
-            if (client && client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({
-                    type: 'match_found',
-                    roomId,
-                    mode,
-                    players: players.map(x => x.userId)
-                }));
-            }
-        });
+        console.log(`[MATCHMAKING] Partida ${roomId} criada com ${players.length} jogadores (${mode}). (Sem notificação WS)`);
         
         // Inicia a partida após um pequeno delay
         setTimeout(() => startMatch(roomId), 5000);
@@ -693,14 +1159,6 @@ function startMatch(roomId) {
     
     room.state = 'playing';
     console.log(`[MATCH] Partida ${roomId} iniciada.`);
-    
-    // Broadcast de início para todos os jogadores da sala
-    broadcastToRoom(roomId, {
-        type: 'match_start',
-        roomId,
-        mode: room.mode,
-        startTime: room.startTime
-    });
     
     // Simula o fim da partida após um tempo (ex: 2 minutos)
     setTimeout(() => endMatch(roomId), 120000);
@@ -729,21 +1187,14 @@ function endMatch(roomId) {
         return { userId: p.userId, position: index + 1, kills: p.kills, goldEarned };
     });
     
-    // Broadcast de resultado
-    broadcastToRoom(roomId, {
-        type: 'match_end',
-        roomId,
-        rewards,
-        winner: winner.userId,
-        duration: Math.floor((room.endTime - room.startTime) / 1000)
-    });
-    
-    // Atualiza o gold dos jogadores (simulado)
+    // Atualiza o gold do jogador principal (simulado)
     rewards.forEach(r => {
         if (r.userId === playerProgress.uid) {
             playerProgress.gold += r.goldEarned;
         }
     });
+    
+    console.log(`[MATCH] Resultados da partida ${roomId}:`, rewards);
     
     // Limpa a sala após um tempo
     setTimeout(() => {
@@ -752,264 +1203,8 @@ function endMatch(roomId) {
     }, 30000);
 }
 
-/**
- * Envia uma mensagem para todos os jogadores em uma sala.
- * 
- * @param {string} roomId - ID da sala
- * @param {object} message - Mensagem a ser enviada (será serializada como JSON)
- */
-function broadcastToRoom(roomId, message) {
-    const room = activeRooms.get(roomId);
-    if (!room) return;
-    
-    const data = JSON.stringify(message);
-    room.players.forEach(p => {
-        const client = connectedClients.get(p.userId);
-        if (client && client.readyState === WebSocket.OPEN) {
-            client.send(data);
-        }
-    });
-}
-
 // ===========================================================================
-// SEÇÃO 8: GERENCIAMENTO DE WEBSOCKET
-// ===========================================================================
-
-/**
- * Configura o servidor WebSocket sobre o servidor HTTP.
- * Gerencia conexões, heartbeats e mensagens do lobby.
- * 
- * @param {http.Server} httpServer - Servidor HTTP existente
- */
-function setupWebSocketServer(httpServer) {
-    // Cria o WebSocket server anexado ao servidor HTTP
-    const wss = new WebSocket.Server({ server: httpServer });
-    
-    console.log('[WS] Servidor WebSocket inicializado.');
-    
-    // Evento de nova conexão
-    wss.on('connection', (ws, req) => {
-        const clientId = generateToken('ws');
-        console.log(`[WS] Nova conexão: ${clientId} de ${req.socket.remoteAddress}`);
-        
-        // Armazena a conexão (sem autenticação inicial)
-        connectedClients.set(clientId, { ws, userId: null, authenticated: false, lastPing: Date.now() });
-        
-        // Envia mensagem de boas-vindas
-        ws.send(JSON.stringify({ type: 'welcome', clientId, server: SERVER_NAME }));
-        
-        // Evento de mensagem recebida
-        ws.on('message', (data) => {
-            try {
-                const message = JSON.parse(data.toString());
-                handleWebSocketMessage(clientId, ws, message);
-            } catch (e) {
-                console.log(`[WS] Mensagem inválida de ${clientId}: ${data.toString().substring(0, 100)}`);
-                ws.send(JSON.stringify({ type: 'error', message: 'Formato inválido' }));
-            }
-        });
-        
-        // Evento de fechamento
-        ws.on('close', () => {
-            console.log(`[WS] Conexão fechada: ${clientId}`);
-            // Remove o cliente da lista e das filas
-            const client = connectedClients.get(clientId);
-            if (client && client.userId) {
-                // Remove das filas de matchmaking
-                for (const mode of ['solo', 'duo', 'squad']) {
-                    matchmakingQueue[mode] = matchmakingQueue[mode].filter(p => p.userId !== client.userId);
-                }
-            }
-            connectedClients.delete(clientId);
-        });
-        
-        // Evento de erro
-        ws.on('error', (error) => {
-            console.error(`[WS] Erro na conexão ${clientId}: ${error.message}`);
-        });
-        
-        // Heartbeat: envia ping a cada 30 segundos
-        const pingInterval = setInterval(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.ping();
-            } else {
-                clearInterval(pingInterval);
-            }
-        }, 30000);
-        
-        ws.on('pong', () => {
-            const client = connectedClients.get(clientId);
-            if (client) client.lastPing = Date.now();
-        });
-    });
-    
-    // Limpeza periódica de conexões inativas (a cada 60 segundos)
-    setInterval(() => {
-        const now = Date.now();
-        for (const [clientId, client] of connectedClients.entries()) {
-            if (now - client.lastPing > 120000) { // 2 minutos sem pong
-                console.log(`[WS] Removendo conexão inativa: ${clientId}`);
-                client.ws.terminate();
-                connectedClients.delete(clientId);
-            }
-        }
-    }, 60000);
-}
-
-/**
- * Trata as mensagens recebidas via WebSocket.
- * 
- * @param {string} clientId - ID interno do cliente
- * @param {WebSocket} ws - Objeto WebSocket
- * @param {object} message - Mensagem parseada
- */
-function handleWebSocketMessage(clientId, ws, message) {
-    const client = connectedClients.get(clientId);
-    if (!client) return;
-    
-    switch (message.type) {
-        // Autenticação do WebSocket (vincula um userId à conexão)
-        case 'authenticate':
-            if (message.token) {
-                const payload = verifyJWT(message.token);
-                if (payload) {
-                    client.userId = payload.userId || payload.sub;
-                    client.authenticated = true;
-                    // Associa a conexão ao userId para lookup rápido
-                    connectedClients.set(client.userId, { ws, userId: client.userId, authenticated: true, lastPing: Date.now() });
-                    ws.send(JSON.stringify({ type: 'auth_success', userId: client.userId }));
-                    console.log(`[WS] Cliente ${clientId} autenticado como ${client.userId}`);
-                } else {
-                    ws.send(JSON.stringify({ type: 'auth_error', message: 'Token inválido' }));
-                }
-            }
-            break;
-        
-        // Chat no lobby
-        case 'chat':
-            if (client.authenticated) {
-                broadcastChat(client.userId, message.text);
-            }
-            break;
-        
-        // Entrar na fila de matchmaking
-        case 'join_queue':
-            if (client.authenticated) {
-                const result = addToMatchmaking(client.userId, message.mode || 'solo', playerProgress.level);
-                ws.send(JSON.stringify({ type: 'queue_status', ...result }));
-            } else {
-                ws.send(JSON.stringify({ type: 'error', message: 'Não autenticado' }));
-            }
-            break;
-        
-        // Sair da fila
-        case 'leave_queue':
-            for (const mode of ['solo', 'duo', 'squad']) {
-                matchmakingQueue[mode] = matchmakingQueue[mode].filter(p => p.userId !== client.userId);
-            }
-            ws.send(JSON.stringify({ type: 'queue_left' }));
-            break;
-        
-        // Ação durante a partida (tiro, morte, posição)
-        case 'game_action':
-            if (client.authenticated && message.roomId) {
-                handleGameAction(client.userId, message.roomId, message);
-            }
-            break;
-        
-        // Solicitação de perfil
-        case 'get_profile':
-            if (client.authenticated) {
-                const profile = getProfile(client.userId);
-                ws.send(JSON.stringify({ type: 'profile', data: profile }));
-            }
-            break;
-        
-        default:
-            ws.send(JSON.stringify({ type: 'unknown', message: `Tipo de mensagem desconhecido: ${message.type}` }));
-    }
-}
-
-/**
- * Envia uma mensagem de chat para todos os clientes autenticados.
- * 
- * @param {string} userId - ID do remetente
- * @param {string} text - Texto da mensagem
- */
-function broadcastChat(userId, text) {
-    const payload = JSON.stringify({
-        type: 'chat',
-        userId,
-        nickname: userId === playerProgress.uid ? playerProgress.nickname : `User_${userId}`,
-        text,
-        timestamp: Date.now()
-    });
-    
-    connectedClients.forEach((client) => {
-        if (client.authenticated && client.ws.readyState === WebSocket.OPEN) {
-            client.ws.send(payload);
-        }
-    });
-}
-
-/**
- * Processa ações de jogo (posição, tiro, morte) e atualiza o estado da sala.
- * 
- * @param {string} userId - ID do jogador
- * @param {string} roomId - ID da sala
- * @param {object} action - Dados da ação
- */
-function handleGameAction(userId, roomId, action) {
-    const room = activeRooms.get(roomId);
-    if (!room || room.state !== 'playing') return;
-    
-    const player = room.players.find(p => p.userId === userId);
-    if (!player || !player.alive) return;
-    
-    switch (action.action) {
-        case 'position':
-            player.position = action.position;
-            // Não transmite posição continuamente para economizar (apenas quando solicitado ou periodicamente)
-            break;
-        case 'shoot':
-            // Registra dano causado (se houver alvo)
-            if (action.targetId) {
-                const target = room.players.find(p => p.userId === action.targetId && p.alive);
-                if (target) {
-                    const damage = Math.floor(Math.random() * 20) + 10; // Dano aleatório
-                    target.health -= damage;
-                    player.damage += damage;
-                    if (target.health <= 0) {
-                        target.health = 0;
-                        target.alive = false;
-                        player.kills++;
-                        // Notifica a morte
-                        broadcastToRoom(roomId, {
-                            type: 'kill',
-                            killer: userId,
-                            victim: action.targetId,
-                            weapon: action.weapon || 'unknown'
-                        });
-                    }
-                }
-            }
-            break;
-        case 'death':
-            player.alive = false;
-            player.health = 0;
-            broadcastToRoom(roomId, {
-                type: 'player_death',
-                userId,
-                cause: action.cause || 'unknown'
-            });
-            break;
-        default:
-            break;
-    }
-}
-
-// ===========================================================================
-// SEÇÃO 9: PERFIL E LOJA
+// SEÇÃO 8: PERFIL E LOJA (mantido, sem alterações)
 // ===========================================================================
 
 /**
@@ -1019,7 +1214,6 @@ function handleGameAction(userId, roomId, action) {
  * @returns {object} Dados do perfil
  */
 function getProfile(userId) {
-    // No protótipo, retorna os dados do jogador padrão ou dados simulados
     if (userId === playerProgress.uid) {
         return {
             uid: playerProgress.uid,
@@ -1033,7 +1227,6 @@ function getProfile(userId) {
             mail: initialMail
         };
     }
-    // Para outros usuários, gera um perfil simulado
     return {
         uid: userId,
         nickname: `User_${userId}`,
@@ -1049,7 +1242,6 @@ function getProfile(userId) {
 
 /**
  * Processa a compra de um item da loja.
- * Deduz as moedas e adiciona o item ao inventário.
  * 
  * @param {string} userId - ID do usuário
  * @param {number} itemId - ID do item
@@ -1061,10 +1253,8 @@ function buyItem(userId, itemId, itemType) {
         return { success: false, message: 'Usuário não encontrado' };
     }
     
-    // Busca o item nos catálogos
     let item = null;
     let price = 0;
-    let currency = 'gold';
     
     switch (itemType) {
         case 'weapon':
@@ -1091,15 +1281,12 @@ function buyItem(userId, itemId, itemType) {
         return { success: false, message: 'Item não encontrado' };
     }
     
-    // Verifica saldo
     if (playerProgress.gold < price) {
         return { success: false, message: 'Gold insuficiente' };
     }
     
-    // Deduz o preço
     playerProgress.gold -= price;
     
-    // Adiciona ao inventário
     const inventory = playerInventories.get(userId) || [];
     const existing = inventory.find(i => i.type === itemType && i.id === itemId);
     if (existing && itemType === 'consumable') {
@@ -1114,15 +1301,11 @@ function buyItem(userId, itemId, itemType) {
 }
 
 // ===========================================================================
-// SEÇÃO 10: ROTAS DO SERVIDOR HTTP (integração com o código original + novas)
+// SEÇÃO 9: ROTAS DO SERVIDOR HTTP
 // ===========================================================================
 
-/**
- * Cria o servidor HTTP e configura todas as rotas.
- * Inclui as rotas originais do Barbosa e as novas rotas para o clone educacional.
- */
 const server = http.createServer((req, res) => {
-    // Tratamento de requisições OPTIONS (CORS preflight)
+    // Preflight CORS
     if (req.method === 'OPTIONS') {
         res.writeHead(200, {
             'Content-Length': '0',
@@ -1141,15 +1324,12 @@ const server = http.createServer((req, res) => {
 
     try {
         // ------------------------------------------------------------------
-        // ROTAS ORIGINAIS DO BARBOSA SERVER (mantidas integralmente)
+        // ROTAS ORIGINAIS DO BARBOSA SERVER
         // ------------------------------------------------------------------
-        
-        // Versão do app
         if (route === '/live/ver.php' || route === '/live/appstoreversioninfo') {
             return textResponse(res, VERSION);
         }
 
-        // Token de convidado (guest token)
         if (route === '/oauth/guest/token/grant') {
             const accessToken = generateToken('acc');
             const data = {
@@ -1202,7 +1382,6 @@ const server = http.createServer((req, res) => {
             return jsonResponse(res, data);
         }
 
-        // Registro de convidado
         if (route === '/oauth/guest/register') {
             const accessToken = generateToken('acc');
             const data = {
@@ -1254,32 +1433,22 @@ const server = http.createServer((req, res) => {
             return jsonResponse(res, data);
         }
 
-        // Rotas OAuth genéricas
         const oauthRoutes = [
-            '/oauth/login',
-            '/oauth/logout',
-            '/oauth/user/friends/inapp/get/v2',
-            '/rebates/redeem',
-            '/rebate/options/get',
-            '/access.line.me/dialog/oauth/weblogin'
+            '/oauth/login', '/oauth/logout', '/oauth/user/friends/inapp/get/v2',
+            '/rebates/redeem', '/rebate/options/get', '/access.line.me/dialog/oauth/weblogin'
         ];
         if (oauthRoutes.includes(route)) {
             return jsonResponse(res, { code: 0, message: "SUCCESS" });
         }
 
-        // Localização (traduções)
+        // Rota de localização (agora com suporte completo a múltiplos idiomas)
         if (route.startsWith('/Localization/')) {
-            return jsonResponse(res, {
-                "LOBBY_PLAY": "JOGAR",
-                "LOBBY_SETTINGS": "CONFIGURAÇÕES",
-                "LOBBY_STORE": "LOJA",
-                "LOBBY_FRIENDS": "AMIGOS",
-                "CHARACTER_ADAM": "Adam",
-                "CHARACTER_ADAM_DESC": "O primeiro personagem."
-            });
+            // Extrai o código do idioma da URL. Ex: /Localization/pt-br -> 'pt-br'
+            const langCode = route.split('/')[2] || 'pt-br';
+            const langData = languages[langCode] || languages['pt-br'];
+            return jsonResponse(res, langData);
         }
 
-        // Configuração do Facebook SDK
         if (route === '/.json') {
             return jsonResponse(res, {
                 android_dialog_configs: {},
@@ -1291,93 +1460,70 @@ const server = http.createServer((req, res) => {
             });
         }
 
-        // crossdomain.xml
         if (route === '/crossdomain.xml') {
             const xml = '<?xml version="1.0"?><!DOCTYPE cross-domain-policy SYSTEM "http://www.macromedia.com/xml/dtds/cross-domain-policy.dtd"><cross-domain-policy><allow-access-from domain="*" to-ports="*"/><allow-http-request-headers-from domain="*" headers="*"/></cross-domain-policy>';
             return xmlResponse(res, xml);
         }
 
-        // Endpoints Protobuf (respostas binárias)
         if (route === '/GetDailyRankingReward') {
-            const buffer = encodeProtobuf({ 1: [] });
-            return binaryResponse(res, buffer);
+            return binaryResponse(res, encodeProtobuf({ 1: [] }));
         }
         if (route === '/GetMultiList') {
-            const buffer = encodeProtobuf({ 1: [] });
-            return binaryResponse(res, buffer);
+            return binaryResponse(res, encodeProtobuf({ 1: [] }));
         }
         if (route === '/GetPlatformFriendIDs') {
-            const buffer = encodeProtobuf({ 1: [] });
-            return binaryResponse(res, buffer);
+            return binaryResponse(res, encodeProtobuf({ 1: [] }));
         }
 
-        // Atividades (notícias)
         if (route === '/GetActivityDesc') {
             return jsonResponse(res, {
                 "1": [
                     {
-                        id: "101",
-                        title: "Evento de Verão",
+                        id: "101", title: "Evento de Verão",
                         description: "Participe e ganhe recompensas exclusivas!",
                         image: "https://cdn.barbosasmobile.com/news/summer.jpg",
-                        start_time: now - 86400,
-                        end_time: now + 86400 * 7,
-                        url: "https://barbosasmobile.com/event/101",
-                        weight: 1
+                        start_time: now - 86400, end_time: now + 86400 * 7,
+                        url: "https://barbosasmobile.com/event/101", weight: 1
                     },
                     {
-                        id: "102",
-                        title: `Atualização ${VERSION}`,
+                        id: "102", title: `Atualização ${VERSION}`,
                         description: "Melhorias de desempenho e tradução completa.",
                         image: "https://cdn.barbosasmobile.com/news/update.jpg",
-                        start_time: now,
-                        end_time: now + 86400 * 14,
-                        url: "https://barbosasmobile.com/event/102",
-                        weight: 2
+                        start_time: now, end_time: now + 86400 * 14,
+                        url: "https://barbosasmobile.com/event/102", weight: 2
                     }
                 ],
                 "2": {
-                    id: "201",
-                    title: "Destaque: Adam",
+                    id: "201", title: "Destaque: Adam",
                     description: "O clássico Adam está de volta!",
                     image: "https://cdn.barbosasmobile.com/news/adam.jpg",
-                    start_time: now,
-                    end_time: now + 86400 * 30,
-                    url: "https://barbosasmobile.com/feature/adam",
-                    highlight: true
+                    start_time: now, end_time: now + 86400 * 30,
+                    url: "https://barbosasmobile.com/feature/adam", highlight: true
                 }
             });
         }
 
-        // Informações do app
         if (route === '/app/info/get') {
             return jsonResponse(res, {
                 version: VERSION,
                 server_url: DEFAULT_SETTINGS.server_url,
                 cdn_url: DEFAULT_SETTINGS.cdn_url,
-                force_update: false,
-                maintenance: false,
-                maintenance_msg: "",
+                force_update: false, maintenance: false, maintenance_msg: "",
                 region: "BR",
                 login_servers: [
                     { ip: "127.0.0.1", port: 60000, type: "lobby" },
                     { ip: "127.0.0.1", port: 60001, type: "matchmake" }
                 ],
                 available_channels: ["live"],
-                news: {
-                    android: `${VERSION} disponível!`,
-                    ios: `${VERSION} disponível!`
-                }
+                news: { android: `${VERSION} disponível!`, ios: `${VERSION} disponível!` }
             });
         }
 
-        // Rota oculta (bytes misteriosos)
         if (route === '/hidden/message') {
-            const buffer = Buffer.from(mysteriousBytes);
-            return binaryResponse(res, buffer);
+            return binaryResponse(res, Buffer.from(mysteriousBytes));
         }
 
-        // Painel admin (login)
+        // Painel admin
         if (route === '/admin/login') {
             if (req.method !== 'POST') {
                 res.writeHead(405);
@@ -1401,14 +1547,12 @@ const server = http.createServer((req, res) => {
             return;
         }
 
-        // Painel admin (atualizar dados do jogador)
         if (route === '/admin/update') {
             if (req.method !== 'POST') {
                 res.writeHead(405);
                 return res.end('Method Not Allowed');
             }
-            const auth = req.headers.authorization;
-            if (!verifyAdmin(auth)) {
+            if (!verifyAdmin(req.headers.authorization)) {
                 return jsonResponse(res, { error: 'Não autorizado' }, 403);
             }
             let body = '';
@@ -1430,14 +1574,13 @@ const server = http.createServer((req, res) => {
             return;
         }
 
-        // Painel admin (status do servidor)
         if (route === '/admin/status') {
             if (!verifyAdmin(req.headers.authorization)) {
                 return jsonResponse(res, { error: 'Não autorizado' }, 403);
             }
             return jsonResponse(res, {
                 server: 'online',
-                players: connectedClients.size,
+                players: 0,
                 uptime: process.uptime(),
                 playerProgress,
                 activeRooms: activeRooms.size,
@@ -1450,71 +1593,48 @@ const server = http.createServer((req, res) => {
         }
 
         // ------------------------------------------------------------------
-        // NOVAS ROTAS PARA O CLONE EDUCACIONAL
+        // NOVAS ROTAS (educacional)
         // ------------------------------------------------------------------
-
-        // POST /login - Autenticação via Protobuf (stub)
         if (route === '/login' && req.method === 'POST') {
             let body = Buffer.alloc(0);
-            req.on('data', chunk => {
-                body = Buffer.concat([body, chunk]);
-            });
+            req.on('data', chunk => body = Buffer.concat([body, chunk]));
             req.on('end', () => {
                 try {
-                    // Tenta decodificar como Protobuf (LoginReq)
                     const loginReq = decodeProtobuf(body);
-                    console.log('[LOGIN] Payload recebido:', JSON.stringify(loginReq, (key, value) =>
-                        typeof value === 'bigint' ? value.toString() : value
-                    ));
-                    
-                    // Stub: aceita qualquer login e retorna um token JWT
-                    const userId = loginReq['1']?.toString() || playerProgress.uid; // Campo 1 = open_id
+                    console.log('[LOGIN] Payload recebido:', JSON.stringify(loginReq, (k, v) => typeof v === 'bigint' ? v.toString() : v));
+                    const userId = loginReq['1']?.toString() || playerProgress.uid;
                     const token = generateJWT({
                         sub: userId,
                         nickname: 'Player',
                         iat: Math.floor(Date.now() / 1000),
                         exp: Math.floor(Date.now() / 1000) + 86400
                     });
-                    
-                    // Resposta LoginRes (Protobuf)
                     const response = encodeProtobuf({
-                        1: token,              // Token JWT
-                        2: '127.0.0.1',        // IP do lobby
-                        3: 60000,              // Porta do lobby
-                        4: '127.0.0.1',        // IP do matchmake
-                        5: 60001               // Porta do matchmake
+                        1: token,
+                        2: '127.0.0.1',
+                        3: 60000,
+                        4: '127.0.0.1',
+                        5: 60001
                     });
-                    
                     return binaryResponse(res, response);
                 } catch (e) {
-                    console.error('[LOGIN] Erro ao processar:', e.message);
-                    const errorResponse = encodeProtobuf({ 1: 'Erro interno' });
-                    return binaryResponse(res, errorResponse, 500);
+                    console.error('[LOGIN] Erro:', e.message);
+                    return binaryResponse(res, encodeProtobuf({ 1: 'Erro interno' }), 500);
                 }
             });
             return;
         }
 
-        // GET /config - Configurações do cliente
         if (route === '/config') {
             return jsonResponse(res, {
                 ...DEFAULT_SETTINGS,
                 version: VERSION,
-                matchmaking_servers: [
-                    { ip: '127.0.0.1', port: 60001, region: 'BR' }
-                ],
+                matchmaking_servers: [{ ip: '127.0.0.1', port: 60001, region: 'BR' }],
                 cdn_base: 'https://cdn.barbosasmobile.com/',
-                features: {
-                    ranked: false,
-                    clan: false,
-                    battlepass: false,
-                    store: true,
-                    events: true
-                }
+                features: { ranked: false, clan: false, battlepass: false, store: true, events: true }
             });
         }
 
-        // POST /matchmaking - Entrar na fila (via HTTP, fallback para WS)
         if (route === '/matchmaking' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
@@ -1530,18 +1650,14 @@ const server = http.createServer((req, res) => {
             return;
         }
 
-        // GET /shop - Lista de itens da loja
         if (route === '/shop') {
             return jsonResponse(res, {
-                weapons,
-                characters,
-                skins,
+                weapons, characters, skins,
                 playerGold: playerProgress.gold,
                 playerDiamonds: playerProgress.diamonds
             });
         }
 
-        // POST /shop/buy - Comprar item
         if (route === '/shop/buy' && req.method === 'POST') {
             let body = '';
             req.on('data', chunk => body += chunk);
@@ -1557,63 +1673,43 @@ const server = http.createServer((req, res) => {
             return;
         }
 
-        // GET /leaderboard - Ranking simulado
         if (route === '/leaderboard') {
-            const mockLeaderboard = [
+            return jsonResponse(res, [
                 { rank: 1, nickname: 'ProPlayer99', level: 85, kills: 1500 },
                 { rank: 2, nickname: 'KallidadeOF', level: 50, kills: 800 },
                 { rank: 3, nickname: 'SniperBR', level: 72, kills: 750 },
                 { rank: 4, nickname: 'GuerreiroBR', level: 32, kills: 300 },
                 { rank: 5, nickname: playerProgress.nickname, level: playerProgress.level, kills: 100 }
-            ];
-            return jsonResponse(res, mockLeaderboard);
+            ]);
         }
 
-        // GET /profile - Perfil do jogador (requer token)
         if (route === '/profile') {
             const auth = req.headers.authorization;
-            if (!auth) {
-                return jsonResponse(res, { error: 'Token não fornecido' }, 401);
-            }
+            if (!auth) return jsonResponse(res, { error: 'Token não fornecido' }, 401);
             const payload = verifyJWT(auth.replace('Bearer ', ''));
-            if (!payload) {
-                return jsonResponse(res, { error: 'Token inválido' }, 401);
-            }
+            if (!payload) return jsonResponse(res, { error: 'Token inválido' }, 401);
             const userId = payload.sub || payload.userId;
             return jsonResponse(res, getProfile(userId));
         }
 
-        // GET /events - Eventos ativos
         if (route === '/events') {
             return jsonResponse(res, [
                 {
-                    id: 'event_001',
-                    name: 'Treinamento de Verão',
+                    id: 'event_001', name: 'Treinamento de Verão',
                     description: 'Complete missões diárias para ganhar recompensas.',
-                    startTime: now - 86400,
-                    endTime: now + 86400 * 14,
-                    rewards: [
-                        { type: 'gold', amount: 500 },
-                        { type: 'weapon', id: 1 }
-                    ]
+                    startTime: now - 86400, endTime: now + 86400 * 14,
+                    rewards: [{ type: 'gold', amount: 500 }, { type: 'weapon', id: 1 }]
                 },
                 {
-                    id: 'event_002',
-                    name: 'Desafio do Adam',
+                    id: 'event_002', name: 'Desafio do Adam',
                     description: 'Vença partidas usando apenas o Adam.',
-                    startTime: now,
-                    endTime: now + 86400 * 7,
-                    rewards: [
-                        { type: 'diamonds', amount: 100 }
-                    ]
+                    startTime: now, endTime: now + 86400 * 7,
+                    rewards: [{ type: 'diamonds', amount: 100 }]
                 }
             ]);
         }
 
-        // ------------------------------------------------------------------
-        // CATCH-ALL: Configuração completa (merge com query)
-        // Mantido do código original
-        // ------------------------------------------------------------------
+        // CATCH-ALL
         const mergedConfig = {
             ...DEFAULT_SETTINGS,
             version: query.version || VERSION,
@@ -1637,73 +1733,37 @@ const server = http.createServer((req, res) => {
             matchmake_port: parseInt(query.matchmake_port) || 60000,
             game_ip: query.game_ip || '127.0.0.1',
             game_port: parseInt(query.game_port) || 60000,
-            server_time: now,
-            timestamp: now,
-            login_time: now,
-            expires_in: 86400,
-            expire_time: now + 86400,
-            is_guest: true,
-            is_new_user: false,
-            login_status: 1,
-            is_vip: false,
-            is_gm: false,
-            gm_level: 0,
-            is_admin: false,
-            is_tester: false,
-            show_test_btn: false,
-            show_gm_panel: false,
-            enable_console: false,
-            character_id: 1,
-            character_name: 'Adam',
-            character_skin_id: 0,
-            character_skin_name: '',
+            server_time: now, timestamp: now, login_time: now,
+            expires_in: 86400, expire_time: now + 86400,
+            is_guest: true, is_new_user: false, login_status: 1,
+            is_vip: false, is_gm: false, gm_level: 0,
+            is_admin: false, is_tester: false,
+            show_test_btn: false, show_gm_panel: false, enable_console: false,
+            character_id: 1, character_name: 'Adam', character_skin_id: 0, character_skin_name: '',
             inventory: playerInventories.get(playerProgress.uid) || [],
             character_list: [{ id: 1, name: 'Adam', skin_id: 0, skin_name: '', equipped: true, owned: true }],
             friends: friendsList,
-            events: [],
-            missions: [],
-            achievements: [],
-            mail: initialMail,
-            notifications: [],
+            events: [], missions: [], achievements: [],
+            mail: initialMail, notifications: [],
             extra: extraPlayerData,
             config: {},
             features: {
-                ranked: false,
-                clan: false,
-                battlepass: false,
-                store: true,
-                luck_royale: false,
-                weapon_royale: false,
-                events: true,
-                missions: true,
-                mail: true,
-                friends: true,
-                chat: true,
-                news: true,
-                settings: true
+                ranked: false, clan: false, battlepass: false,
+                store: true, luck_royale: false, weapon_royale: false,
+                events: true, missions: true, mail: true, friends: true,
+                chat: true, news: true, settings: true
             },
             settings: {
-                graphics_quality: "Padrão",
-                frame_rate: "Normal",
+                graphics_quality: "Padrão", frame_rate: "Normal",
                 control_style: "2 Dedos",
-                sensitivity: {
-                    global: 50,
-                    red_dot: 50,
-                    scope_2x: 50,
-                    scope_4x: 50,
-                    sniper: 50,
-                    free_look: 50
-                },
-                audio_master: 80,
-                audio_sfx: 60,
-                audio_voice: 40
+                sensitivity: { global: 50, red_dot: 50, scope_2x: 50, scope_4x: 50, sniper: 50, free_look: 50 },
+                audio_master: 80, audio_sfx: 60, audio_voice: 40
             },
             debug: {}
         };
         return jsonResponse(res, mergedConfig);
 
     } catch (error) {
-        // Em caso de erro grave, retorna as configurações padrão
         console.error('[ERRO]', error.message);
         const errorBody = JSON.stringify(DEFAULT_SETTINGS);
         const errorBuffer = Buffer.from(errorBody, 'utf-8');
@@ -1714,25 +1774,20 @@ const server = http.createServer((req, res) => {
 });
 
 // ===========================================================================
-// SEÇÃO 11: INICIALIZAÇÃO DO SERVIDOR E WEBSOCKET
+// SEÇÃO 10: INICIALIZAÇÃO DO SERVIDOR
 // ===========================================================================
 
-// Configura o WebSocket sobre o servidor HTTP
-setupWebSocketServer(server);
-
-// Inicia o servidor na porta definida
 server.listen(PORT, () => {
     console.log('============================================================');
-    console.log(` ${SERVER_NAME}`);
+    console.log(` ${SERVER_NAME} (SEM WEBSOCKET)`);
     console.log(` Versão: ${VERSION} (Winterlands 2018)`);
     console.log(` Porta: ${PORT}`);
     console.log(` Endereço: http://localhost:${PORT}`);
-    console.log(` WebSocket: ws://localhost:${PORT}`);
     console.log(` Painel Admin: http://localhost:${PORT}/admin/login`);
     console.log(` Personagem padrão: Adam (ID: 1)`);
+    console.log(` Idiomas carregados: ${Object.keys(languages).join(', ')}`);
     console.log('============================================================');
-    console.log('[OK] Servidor pronto para receber conexões.');
+    console.log('[OK] Servidor pronto para receber conexões (apenas HTTP).');
 });
 
-// Exporta o servidor para uso como módulo (se necessário)
 module.exports = server;
