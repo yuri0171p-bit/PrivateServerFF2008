@@ -1,13 +1,16 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const url = require('url');
-const crypto = require('crypto');
+const http = require('http');          // Servidor HTTP e eventos de upgrade
+const url = require('url');            // Parse de URLs e query strings
+const fs = require('fs');              // Leitura de arquivos JSON estáticos
+const path = require('path');          // Manipulação de caminhos de arquivos
+const crypto = require('crypto');      // Geração de tokens JWT e hash de senhas
 
-// ============================================================================
-// CONSTANTES DE AMBIENTE (do Barbosa / Firebase / etc.)
-// ============================================================================
-const PORT = process.env.PORT || 10000;
+// Módulo WebSocket (opera sobre HTTP, permitido pelo escopo)
+const WebSocket = require('ws');
+
+// ---------------------------------------------------------------------------
+// Constantes do ambiente (Firebase e outras, mantidas do código original)
+// ---------------------------------------------------------------------------
+const PORT = process.env.PORT || 8080;                      // Porta do servidor
 const FIREBASE_PLAYER_URL = process.env.FIREBASE_DATABASE_URL || 'https://project-store-47172-default-rtdb.firebaseio.com';
 const FIREBASE_LOGIN_URL = process.env.FIREBASE_LOGIN_URL || 'https://project-store-47172-default-rtdb.firebaseio.com';
 const FIREBASE_LOGIN_KEY = process.env.FIREBASE_LOGIN_KEY || '';
@@ -17,15 +20,31 @@ const FIREBASE_BASE_URL = process.env.FIREBASE_BASE_URL || 'https://project-stor
 const FIREBASE_SECRET = process.env.FIREBASE_SECRET || '';
 const FIREBASE_URL = FIREBASE_PLAYER_URL;
 
-// ============================================================================
-// CACHE
-// ============================================================================
-const cache = new Map();
-const CACHE_TTL = 60 * 1000; // 60 segundos
+// Constantes do servidor de jogo
+const JWT_SECRET = 'barbosa-secret-key-2018-winterlands';  // Chave para assinar tokens JWT
+const SERVER_NAME = 'Barbosa Server 1.25.3';               // Nome do servidor
+const VERSION = '1.25.3';                                  // Versão suportada
+const WINTERLANDS_BUILD = '20181201';                      // Build do Winterlands
 
-// ============================================================================
-// PERSISTÊNCIA SIMULADA (apenas Adam)
-// ============================================================================
+// ---------------------------------------------------------------------------
+// Estruturas de dados globais (em memória)
+// ---------------------------------------------------------------------------
+const cache = new Map();                // Cache genérico (tokens, respostas temporárias)
+const CACHE_TTL = 60 * 1000;           // Tempo de vida do cache (60 segundos)
+
+const users = new Map();                // Contas de usuário (simuladas) - userId -> userData
+const connectedClients = new Map();     // Clientes WebSocket conectados - ws -> userData
+const matchmakingQueue = {              // Filas de matchmaking
+  solo: [],                             // Jogadores solo
+  duo: [],                              // Duplas (pré-formadas ou aleatórias)
+  squad: []                             // Esquadrões (pré-formados ou aleatórios)
+};
+const activeRooms = new Map();          // Salas de partida ativas - roomId -> roomData
+const playerInventories = new Map();    // Inventário dos jogadores - userId -> items[]
+
+// ---------------------------------------------------------------------------
+// Dados persistentes simulados (mantidos do código original)
+// ---------------------------------------------------------------------------
 let playerProgress = {
     uid: '99999999',
     nickname: 'Player',
@@ -36,15 +55,16 @@ let playerProgress = {
     banReason: ''
 };
 
+// Lista de amigos estática (mantida do código original)
 const friendsList = [
     { uid: '11111111', nickname: 'KallidadeOF', level: 50, online: true },
     { uid: '22222222', nickname: 'GuerreiroBR', level: 32, online: false },
     { uid: '33333333', nickname: 'ProPlayer2025', level: 70, online: true }
 ];
 
-// ============================================================================
-// BYTES MISTERIOSOS (exatamente como no print)
-// ============================================================================
+// ---------------------------------------------------------------------------
+// Bytes misteriosos (mantidos do código original)
+// ---------------------------------------------------------------------------
 const mysteriousBytes = [
     76, 117, 107, 105, 110, 103, 62, 32, 110, 195, 163, 111, 32,
     102, 97, 122, 32, 109, 97, 105, 115, 112, 32, 97, 114, 116,
@@ -57,6 +77,7 @@ const mysteriousBytes = [
     115, 97, 46
 ];
 
+// Dados extras do jogador (mantidos do código original)
 const extraPlayerData = {
     "5": { "2": "KallidadeOF" },
     "6": { "1": "" },
@@ -65,6 +86,7 @@ const extraPlayerData = {
     "10": 1
 };
 
+// Configurações padrão do cliente (mantidas do código original)
 const DEFAULT_SETTINGS = {
     appstore_url: 'https://discord.gg/projectreverger',
     billboard_msg: 'Bem-vindo ao servidor privado!',
@@ -78,9 +100,9 @@ const DEFAULT_SETTINGS = {
     is_server_open: true,
     maintenance_announcement: 'Este projeto não faz afiliação com a Garena.',
     remote_option_version: '1.0.0',
-    remote_version: '1.43.0',
+    remote_version: '1.25.3',
     server_url: 'https://versionscommon.barbosasmobile.com/live/',
-    version: '1.43.3',
+    version: '1.25.3',
     lang: 'pt-br',
     device: 'android',
     appstore: 'googleplay',
@@ -110,9 +132,93 @@ const DEFAULT_SETTINGS = {
     notifications: []
 };
 
-// ============================================================================
-// FUNÇÕES DE PROTOBUF
-// ============================================================================
+// ===========================================================================
+// SEÇÃO 2: CARREGAMENTO DE DADOS ESTÁTICOS (JSON)
+// ===========================================================================
+
+// Caminho base para os arquivos de dados
+const DATA_DIR = path.join(__dirname, 'data');
+
+/**
+ * Carrega um arquivo JSON do diretório de dados.
+ * Se o arquivo não existir ou houver erro, retorna os dados padrão fornecidos.
+ * 
+ * @param {string} filename - Nome do arquivo JSON (ex: 'weapons.json')
+ * @param {object} defaultData - Dados padrão a serem usados em caso de falha
+ * @returns {object} Dados carregados ou padrão
+ */
+function loadJSON(filename, defaultData) {
+  try {
+    const filePath = path.join(DATA_DIR, filename);
+    if (fs.existsSync(filePath)) {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      console.log(`[OK] Arquivo ${filename} carregado com sucesso.`);
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.log(`[AVISO] Não foi possível carregar ${filename}: ${err.message}`);
+  }
+  console.log(`[AVISO] Usando dados padrão para ${filename}`);
+  return defaultData;
+}
+
+// Dados padrão para armas
+const defaultWeapons = [
+  { id: 1, name: 'M4A1', type: 'rifle', damage: 30, price: 500, rarity: 'common' },
+  { id: 2, name: 'AK47', type: 'rifle', damage: 35, price: 600, rarity: 'common' },
+  { id: 3, name: 'MP40', type: 'smg', damage: 22, price: 400, rarity: 'common' },
+  { id: 4, name: 'AWM', type: 'sniper', damage: 80, price: 1000, rarity: 'rare' },
+  { id: 5, name: 'M1887', type: 'shotgun', damage: 45, price: 550, rarity: 'common' },
+  { id: 6, name: 'SCAR', type: 'rifle', damage: 32, price: 650, rarity: 'uncommon' },
+  { id: 7, name: 'Grenade', type: 'throwable', damage: 90, price: 200, rarity: 'common' },
+  { id: 8, name: 'Med Kit', type: 'consumable', heal: 50, price: 150, rarity: 'common' }
+];
+
+// Dados padrão para personagens
+const defaultCharacters = [
+  { id: 1, name: 'Adam', ability: 'None', price: 0, rarity: 'default' },
+  { id: 2, name: 'Kelly', ability: 'Dash', price: 500, rarity: 'common' },
+  { id: 3, name: 'Andrew', ability: 'Armor Repair', price: 400, rarity: 'common' },
+  { id: 4, name: 'Moco', ability: 'Hack', price: 600, rarity: 'uncommon' },
+  { id: 5, name: 'Maxim', ability: 'Fast Eat', price: 500, rarity: 'common' }
+];
+
+// Dados padrão para skins
+const defaultSkins = [
+  { id: 1, name: 'M4A1 Dragon', weapon_id: 1, price: 800, rarity: 'rare' },
+  { id: 2, name: 'AK47 Flame', weapon_id: 2, price: 750, rarity: 'uncommon' },
+  { id: 3, name: 'AWM Lightning', weapon_id: 4, price: 1200, rarity: 'epic' },
+  { id: 4, name: 'MP40 Cobra', weapon_id: 3, price: 600, rarity: 'common' },
+  { id: 5, name: 'Kelly Speed', character_id: 2, price: 700, rarity: 'rare' }
+];
+
+// Carrega os dados (ou usa os padrão)
+const weapons = loadJSON('weapons.json', defaultWeapons);
+const characters = loadJSON('characters.json', defaultCharacters);
+const skins = loadJSON('skins.json', defaultSkins);
+
+// Inicializa o inventário do jogador padrão com o Adam e alguns itens básicos
+if (!playerInventories.has('99999999')) {
+  playerInventories.set('99999999', [
+    { type: 'character', id: 1, equipped: true },   // Adam equipado
+    { type: 'weapon', id: 1, equipped: true },       // M4A1 equipada
+    { type: 'weapon', id: 3, equipped: false },      // MP40
+    { type: 'consumable', id: 8, quantity: 5 }       // 5 Med Kits
+  ]);
+}
+
+// ===========================================================================
+// SEÇÃO 3: FUNÇÕES AUXILIARES DE PROTOBUF (mantidas do código original)
+// ===========================================================================
+
+/**
+ * Lê um varint (unsigned LEB128) do buffer a partir do offset fornecido.
+ * Retorna um objeto com o valor (BigInt) e o novo offset.
+ * 
+ * @param {Buffer} buffer - O buffer de onde ler
+ * @param {number} offset - Posição inicial no buffer
+ * @returns {{value: bigint, offset: number}}
+ */
 function readVarint(buffer, offset) {
     let result = 0n;
     let shift = 0n;
@@ -127,6 +233,13 @@ function readVarint(buffer, offset) {
     throw new Error('Varint ultrapassou o fim do buffer');
 }
 
+/**
+ * Decodifica um buffer no formato Protobuf para um objeto JavaScript.
+ * Suporta wire types: 0 (varint), 1 (64-bit), 2 (length-delimited), 5 (32-bit).
+ * 
+ * @param {Buffer} buffer - Buffer com dados Protobuf
+ * @returns {object} Objeto decodificado
+ */
 function decodeProtobuf(buffer) {
     const obj = {};
     let offset = 0;
@@ -136,19 +249,19 @@ function decodeProtobuf(buffer) {
         offset = tag.offset;
         const fieldNumber = Number(tag.value >> 3n);
         const wireType = Number(tag.value & 0x07n);
-        if (wireType === 0) {
+        if (wireType === 0) { // Varint
             const varint = readVarint(view, offset);
             obj[fieldNumber] = safeInt64(varint.value, 0);
             offset = varint.offset;
-        } else if (wireType === 1) {
+        } else if (wireType === 1) { // 64-bit (double)
             if (offset + 8 > view.length) break;
             obj[fieldNumber] = view.readDoubleLE(offset);
             offset += 8;
-        } else if (wireType === 5) {
+        } else if (wireType === 5) { // 32-bit (float)
             if (offset + 4 > view.length) break;
             obj[fieldNumber] = view.readFloatLE(offset);
             offset += 4;
-        } else if (wireType === 2) {
+        } else if (wireType === 2) { // Length-delimited
             const lengthVarint = readVarint(view, offset);
             const length = Number(lengthVarint.value);
             offset = lengthVarint.offset;
@@ -162,12 +275,21 @@ function decodeProtobuf(buffer) {
                 obj[fieldNumber] = sub.toString('utf-8');
             }
         } else {
+            // Wire type desconhecido, encerra o loop para segurança
             break;
         }
     }
     return obj;
 }
 
+/**
+ * Converte um valor BigInt ou number para um inteiro seguro (Number).
+ * Trata complemento de dois para 64 bits se necessário.
+ * 
+ * @param {bigint|number} value - Valor a ser convertido
+ * @param {number} defaultValue - Valor padrão se a conversão falhar
+ * @returns {number} Inteiro seguro
+ */
 function safeInt64(value, defaultValue) {
     if (typeof value === 'bigint') {
         if (value > 9223372036854775807n || value < -9223372036854775808n) {
@@ -188,6 +310,12 @@ function safeInt64(value, defaultValue) {
     return defaultValue;
 }
 
+/**
+ * Codifica um número como varint (unsigned LEB128) e retorna um Buffer.
+ * 
+ * @param {number|bigint} num - Número a ser codificado
+ * @returns {Buffer}
+ */
 function encodeVarint(num) {
     const bytes = [];
     let value = BigInt(num);
@@ -196,10 +324,17 @@ function encodeVarint(num) {
         value >>= 7n;
     }
     if (bytes.length === 0) bytes.push(0);
-    else bytes[bytes.length - 1] &= 0x7F;
+    else bytes[bytes.length - 1] &= 0x7F; // Limpa o bit de continuação no último byte
     return Buffer.from(bytes);
 }
 
+/**
+ * Codifica um objeto JavaScript em formato Protobuf simples.
+ * Suporta números, strings, buffers, objetos e arrays (repetidos).
+ * 
+ * @param {object} obj - Objeto a ser codificado (chaves como números de campo)
+ * @returns {Buffer}
+ */
 function encodeProtobuf(obj) {
     const chunks = [];
     for (const key of Object.keys(obj)) {
@@ -208,10 +343,10 @@ function encodeProtobuf(obj) {
         const value = obj[key];
         if (typeof value === 'number') {
             if (Number.isInteger(value)) {
-                const tag = (fieldNumber << 3) | 0;
+                const tag = (fieldNumber << 3) | 0; // Wire type 0
                 chunks.push(encodeVarint(tag), encodeVarint(value));
             } else {
-                const tag = (fieldNumber << 3) | 1;
+                const tag = (fieldNumber << 3) | 1; // Wire type 1 (double)
                 chunks.push(encodeVarint(tag));
                 const b = Buffer.alloc(8);
                 b.writeDoubleLE(value);
@@ -219,12 +354,13 @@ function encodeProtobuf(obj) {
             }
         } else if (typeof value === 'string') {
             const strBuf = Buffer.from(value, 'utf-8');
-            const tag = (fieldNumber << 3) | 2;
+            const tag = (fieldNumber << 3) | 2; // Wire type 2
             chunks.push(encodeVarint(tag), encodeVarint(strBuf.length), strBuf);
         } else if (Buffer.isBuffer(value)) {
             const tag = (fieldNumber << 3) | 2;
             chunks.push(encodeVarint(tag), encodeVarint(value.length), value);
         } else if (Array.isArray(value)) {
+            // Campos repetidos: cada item é uma sub-mensagem com a mesma tag
             for (const item of value) {
                 const sub = encodeProtobuf(item);
                 const tag = (fieldNumber << 3) | 2;
@@ -239,9 +375,15 @@ function encodeProtobuf(obj) {
     return Buffer.concat(chunks);
 }
 
-// ============================================================================
-// FUNÇÕES DE RESPOSTA COM MUITOS res.setHeader (estilo Barbosa)
-// ============================================================================
+// ===========================================================================
+// SEÇÃO 4: FUNÇÕES DE RESPOSTA HTTP COM HEADERS CLOUDFLARE (mantidas)
+// ===========================================================================
+
+/**
+ * Remove headers indesejados que podem ser adicionados por proxies (Vercel, Cloudflare).
+ * 
+ * @param {http.ServerResponse} res - Objeto de resposta HTTP
+ */
 function removeVercelHeaders(res) {
     const headersToRemove = [
         'Access-Control-Allow-Origin',
@@ -263,15 +405,22 @@ function removeVercelHeaders(res) {
     });
 }
 
+/**
+ * Aplica headers típicos de resposta do Cloudflare (estilo Barbosa Server).
+ * Inclui Content-Type, Content-Length e vários headers de controle.
+ * 
+ * @param {http.ServerResponse} res - Objeto de resposta HTTP
+ * @param {string} contentType - Tipo de conteúdo (ex: 'application/json')
+ * @param {number} contentLength - Tamanho do corpo em bytes
+ */
 function applyCloudflareHeaders(res, contentType, contentLength) {
-    // Remove headers automáticos
+    // Remove headers automáticos que podem interferir
     removeVercelHeaders(res);
     // Adiciona os headers manualmente
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', contentLength);
     res.setHeader('alt-svc', 'h3=":443"; ma=86400');
     res.setHeader('cf-cache-status', 'DYNAMIC');
-    // CF-RAY pode ser dinâmico; aqui usamos um fixo do print
     res.setHeader('CF-RAY', '9fe607862821941-001');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Nel', '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604500}');
@@ -279,10 +428,17 @@ function applyCloudflareHeaders(res, contentType, contentLength) {
     res.setHeader('Server', 'cloudflare');
     res.setHeader('Server-Timing', 'cfCacheStatus;desc="DYNAMIC", cfEdge;dur=4, cfOrigin;dur=27');
     res.setHeader('Date', new Date().toUTCString());
-    // Evita compressão
+    // Evita compressão indesejada que pode corromper respostas binárias
     res.setHeader('Cache-Control', 'no-transform');
 }
 
+/**
+ * Envia uma resposta JSON com os headers Cloudflare.
+ * 
+ * @param {http.ServerResponse} res
+ * @param {object} data - Dados a serem serializados como JSON
+ * @param {number} statusCode - Código HTTP (padrão 200)
+ */
 function jsonResponse(res, data, statusCode = 200) {
     const body = JSON.stringify(data);
     const buffer = Buffer.from(body, 'utf-8');
@@ -291,6 +447,13 @@ function jsonResponse(res, data, statusCode = 200) {
     return res.end(buffer);
 }
 
+/**
+ * Envia uma resposta de texto plano com os headers Cloudflare.
+ * 
+ * @param {http.ServerResponse} res
+ * @param {string} text - Texto a ser enviado
+ * @param {number} statusCode - Código HTTP (padrão 200)
+ */
 function textResponse(res, text, statusCode = 200) {
     const buffer = Buffer.from(text, 'utf-8');
     applyCloudflareHeaders(res, 'text/plain; charset=utf-8', buffer.length);
@@ -298,6 +461,13 @@ function textResponse(res, text, statusCode = 200) {
     return res.end(buffer);
 }
 
+/**
+ * Envia uma resposta XML com os headers Cloudflare.
+ * 
+ * @param {http.ServerResponse} res
+ * @param {string} xml - Conteúdo XML
+ * @param {number} statusCode - Código HTTP (padrão 200)
+ */
 function xmlResponse(res, xml, statusCode = 200) {
     const buffer = Buffer.from(xml, 'utf-8');
     applyCloudflareHeaders(res, 'application/xml; charset=utf-8', buffer.length);
@@ -305,15 +475,33 @@ function xmlResponse(res, xml, statusCode = 200) {
     return res.end(buffer);
 }
 
+/**
+ * Envia uma resposta binária (octet-stream) com os headers Cloudflare.
+ * 
+ * @param {http.ServerResponse} res
+ * @param {Buffer} buffer - Dados binários
+ * @param {number} statusCode - Código HTTP (padrão 200)
+ */
 function binaryResponse(res, buffer, statusCode = 200) {
     applyCloudflareHeaders(res, 'application/octet-stream', buffer.length);
     res.writeHead(statusCode);
     return res.end(buffer);
 }
 
-// ============================================================================
-// E-MAIL LIMPO
-// ============================================================================
+// ===========================================================================
+// SEÇÃO 5: UTILITÁRIOS DIVERSOS
+// ===========================================================================
+
+/**
+ * Gera um item de e-mail (correio) simples.
+ * Substitui os blocos gigantes do código original do Barbosa.
+ * 
+ * @param {number} id - ID do e-mail
+ * @param {string} title - Título
+ * @param {string} sender - Remetente
+ * @param {string} message - Conteúdo da mensagem
+ * @returns {object} Objeto de e-mail
+ */
 function generateMailItem(id, title, sender, message) {
     return {
         id,
@@ -327,35 +515,614 @@ function generateMailItem(id, title, sender, message) {
     };
 }
 
+// E-mails iniciais do jogador
 const initialMail = [
     generateMailItem(1, 'Bem-vindo!', 'Equipe Private Server', 'Obrigado por jogar no servidor privado. Personagem padrão: Adam.'),
     generateMailItem(2, 'Dica do Dia', 'Sistema', 'Use o chat para conhecer outros jogadores.'),
     generateMailItem(3, 'Evento de Verão', 'Moderação', 'Participe do evento e ganhe Gold extra.')
 ];
 
-// ============================================================================
-// ADMIN
-// ============================================================================
-const ADMIN_USERNAME = 'dono133teste';
-const ADMIN_PASSWORD = 'six seven';
-const adminSessions = new Map();
+// ===========================================================================
+// SEÇÃO 6: AUTENTICAÇÃO E ADMIN (mantido do original)
+// ===========================================================================
 
+const ADMIN_USERNAME = 'dono133teste';   // Nome de usuário do painel admin
+const ADMIN_PASSWORD = 'six seven';      // Senha do painel admin
+const adminSessions = new Map();         // Sessões admin ativas (token -> timestamp)
+
+/**
+ * Verifica se o token de autorização é válido para uma sessão admin.
+ * 
+ * @param {string} authHeader - Cabeçalho Authorization (Bearer token)
+ * @returns {boolean} true se autenticado
+ */
 function verifyAdmin(authHeader) {
     if (!authHeader) return false;
     const token = authHeader.replace('Bearer ', '');
     const session = adminSessions.get(token);
+    // Sessão válida por 1 hora
     return session && (Date.now() - session) < 3600000;
 }
 
+/**
+ * Gera um token aleatório com prefixo.
+ * 
+ * @param {string} prefix - Prefixo do token (ex: 'acc', 'adm')
+ * @returns {string} Token gerado
+ */
 function generateToken(prefix) {
     return `${prefix}_${crypto.randomBytes(16).toString('hex')}_${Date.now()}`;
 }
 
-// ============================================================================
-// SERVIDOR HTTP
-// ============================================================================
+/**
+ * Gera um token JWT simples (simulado) usando HMAC-SHA256.
+ * 
+ * @param {object} payload - Dados a serem incluídos no token
+ * @returns {string} Token JWT
+ */
+function generateJWT(payload) {
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+    const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const signature = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url');
+    return `${header}.${body}.${signature}`;
+}
+
+/**
+ * Verifica um token JWT e retorna o payload se válido.
+ * 
+ * @param {string} token - Token JWT
+ * @returns {object|null} Payload ou null se inválido
+ */
+function verifyJWT(token) {
+    try {
+        const parts = token.split('.');
+        if (parts.length !== 3) return null;
+        const signature = crypto.createHmac('sha256', JWT_SECRET).update(`${parts[0]}.${parts[1]}`).digest('base64url');
+        if (signature !== parts[2]) return null;
+        return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
+    } catch (e) {
+        return null;
+    }
+}
+
+// ===========================================================================
+// SEÇÃO 7: LÓGICA DE LOBBY E MATCHMAKING
+// ===========================================================================
+
+/**
+ * Adiciona um jogador à fila de matchmaking.
+ * 
+ * @param {string} userId - ID do usuário
+ * @param {string} mode - Modalidade ('solo', 'duo', 'squad')
+ * @param {number} level - Nível do jogador
+ * @returns {object} Status da fila
+ */
+function addToMatchmaking(userId, mode, level) {
+    if (!matchmakingQueue[mode]) {
+        return { success: false, message: 'Modalidade inválida' };
+    }
+    
+    // Verifica se o jogador já está em alguma fila
+    for (const m of ['solo', 'duo', 'squad']) {
+        matchmakingQueue[m] = matchmakingQueue[m].filter(p => p.userId !== userId);
+    }
+    
+    // Adiciona à fila escolhida
+    matchmakingQueue[mode].push({
+        userId,
+        level,
+        joinedAt: Date.now(),
+        ws: null // Será preenchido quando o WebSocket estiver associado
+    });
+    
+    console.log(`[MATCHMAKING] Jogador ${userId} entrou na fila ${mode}. Fila: ${matchmakingQueue[mode].length} jogadores.`);
+    
+    // Tenta formar partida se houver jogadores suficientes
+    tryFormMatch(mode);
+    
+    return { success: true, position: matchmakingQueue[mode].length };
+}
+
+/**
+ * Tenta formar uma partida com os jogadores na fila.
+ * Para simplificar, usa um limite de 2 jogadores para solo, 4 para duo (2 duplas) e 8 para squad (2 esquadrões).
+ * 
+ * @param {string} mode - Modalidade
+ */
+function tryFormMatch(mode) {
+    let requiredPlayers;
+    switch (mode) {
+        case 'solo': requiredPlayers = 2; break;   // Mínimo de 2 para teste
+        case 'duo': requiredPlayers = 4; break;    // 2 duplas
+        case 'squad': requiredPlayers = 8; break;  // 2 esquadrões
+        default: return;
+    }
+    
+    const queue = matchmakingQueue[mode];
+    if (queue.length >= requiredPlayers) {
+        // Pega os primeiros jogadores da fila
+        const players = queue.splice(0, requiredPlayers);
+        const roomId = generateToken('room');
+        
+        // Cria a sala de partida
+        activeRooms.set(roomId, {
+            id: roomId,
+            mode,
+            players: players.map(p => ({
+                userId: p.userId,
+                level: p.level,
+                kills: 0,
+                damage: 0,
+                alive: true,
+                position: { x: Math.random() * 1000, y: 0, z: Math.random() * 1000 },
+                health: 100
+            })),
+            state: 'starting', // starting, playing, ended
+            startTime: Date.now(),
+            endTime: null
+        });
+        
+        console.log(`[MATCHMAKING] Partida ${roomId} criada com ${players.length} jogadores (${mode}).`);
+        
+        // Notifica os jogadores (se estiverem conectados via WebSocket)
+        players.forEach(p => {
+            const client = connectedClients.get(p.userId);
+            if (client && client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({
+                    type: 'match_found',
+                    roomId,
+                    mode,
+                    players: players.map(x => x.userId)
+                }));
+            }
+        });
+        
+        // Inicia a partida após um pequeno delay
+        setTimeout(() => startMatch(roomId), 5000);
+    }
+}
+
+/**
+ * Inicia uma partida (muda o estado para 'playing').
+ * 
+ * @param {string} roomId - ID da sala
+ */
+function startMatch(roomId) {
+    const room = activeRooms.get(roomId);
+    if (!room) return;
+    
+    room.state = 'playing';
+    console.log(`[MATCH] Partida ${roomId} iniciada.`);
+    
+    // Broadcast de início para todos os jogadores da sala
+    broadcastToRoom(roomId, {
+        type: 'match_start',
+        roomId,
+        mode: room.mode,
+        startTime: room.startTime
+    });
+    
+    // Simula o fim da partida após um tempo (ex: 2 minutos)
+    setTimeout(() => endMatch(roomId), 120000);
+}
+
+/**
+ * Finaliza uma partida, calcula resultados e distribui recompensas.
+ * 
+ * @param {string} roomId - ID da sala
+ */
+function endMatch(roomId) {
+    const room = activeRooms.get(roomId);
+    if (!room || room.state === 'ended') return;
+    
+    room.state = 'ended';
+    room.endTime = Date.now();
+    console.log(`[MATCH] Partida ${roomId} finalizada.`);
+    
+    // Cálculo simples de ranking (por kills)
+    const sorted = room.players.sort((a, b) => b.kills - a.kills);
+    const winner = sorted[0];
+    
+    // Recompensas: gold baseado na posição
+    const rewards = room.players.map((p, index) => {
+        const goldEarned = Math.floor(100 / (index + 1)) + (p.kills * 10);
+        return { userId: p.userId, position: index + 1, kills: p.kills, goldEarned };
+    });
+    
+    // Broadcast de resultado
+    broadcastToRoom(roomId, {
+        type: 'match_end',
+        roomId,
+        rewards,
+        winner: winner.userId,
+        duration: Math.floor((room.endTime - room.startTime) / 1000)
+    });
+    
+    // Atualiza o gold dos jogadores (simulado)
+    rewards.forEach(r => {
+        if (r.userId === playerProgress.uid) {
+            playerProgress.gold += r.goldEarned;
+        }
+    });
+    
+    // Limpa a sala após um tempo
+    setTimeout(() => {
+        activeRooms.delete(roomId);
+        console.log(`[MATCH] Sala ${roomId} removida.`);
+    }, 30000);
+}
+
+/**
+ * Envia uma mensagem para todos os jogadores em uma sala.
+ * 
+ * @param {string} roomId - ID da sala
+ * @param {object} message - Mensagem a ser enviada (será serializada como JSON)
+ */
+function broadcastToRoom(roomId, message) {
+    const room = activeRooms.get(roomId);
+    if (!room) return;
+    
+    const data = JSON.stringify(message);
+    room.players.forEach(p => {
+        const client = connectedClients.get(p.userId);
+        if (client && client.readyState === WebSocket.OPEN) {
+            client.send(data);
+        }
+    });
+}
+
+// ===========================================================================
+// SEÇÃO 8: GERENCIAMENTO DE WEBSOCKET
+// ===========================================================================
+
+/**
+ * Configura o servidor WebSocket sobre o servidor HTTP.
+ * Gerencia conexões, heartbeats e mensagens do lobby.
+ * 
+ * @param {http.Server} httpServer - Servidor HTTP existente
+ */
+function setupWebSocketServer(httpServer) {
+    // Cria o WebSocket server anexado ao servidor HTTP
+    const wss = new WebSocket.Server({ server: httpServer });
+    
+    console.log('[WS] Servidor WebSocket inicializado.');
+    
+    // Evento de nova conexão
+    wss.on('connection', (ws, req) => {
+        const clientId = generateToken('ws');
+        console.log(`[WS] Nova conexão: ${clientId} de ${req.socket.remoteAddress}`);
+        
+        // Armazena a conexão (sem autenticação inicial)
+        connectedClients.set(clientId, { ws, userId: null, authenticated: false, lastPing: Date.now() });
+        
+        // Envia mensagem de boas-vindas
+        ws.send(JSON.stringify({ type: 'welcome', clientId, server: SERVER_NAME }));
+        
+        // Evento de mensagem recebida
+        ws.on('message', (data) => {
+            try {
+                const message = JSON.parse(data.toString());
+                handleWebSocketMessage(clientId, ws, message);
+            } catch (e) {
+                console.log(`[WS] Mensagem inválida de ${clientId}: ${data.toString().substring(0, 100)}`);
+                ws.send(JSON.stringify({ type: 'error', message: 'Formato inválido' }));
+            }
+        });
+        
+        // Evento de fechamento
+        ws.on('close', () => {
+            console.log(`[WS] Conexão fechada: ${clientId}`);
+            // Remove o cliente da lista e das filas
+            const client = connectedClients.get(clientId);
+            if (client && client.userId) {
+                // Remove das filas de matchmaking
+                for (const mode of ['solo', 'duo', 'squad']) {
+                    matchmakingQueue[mode] = matchmakingQueue[mode].filter(p => p.userId !== client.userId);
+                }
+            }
+            connectedClients.delete(clientId);
+        });
+        
+        // Evento de erro
+        ws.on('error', (error) => {
+            console.error(`[WS] Erro na conexão ${clientId}: ${error.message}`);
+        });
+        
+        // Heartbeat: envia ping a cada 30 segundos
+        const pingInterval = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.ping();
+            } else {
+                clearInterval(pingInterval);
+            }
+        }, 30000);
+        
+        ws.on('pong', () => {
+            const client = connectedClients.get(clientId);
+            if (client) client.lastPing = Date.now();
+        });
+    });
+    
+    // Limpeza periódica de conexões inativas (a cada 60 segundos)
+    setInterval(() => {
+        const now = Date.now();
+        for (const [clientId, client] of connectedClients.entries()) {
+            if (now - client.lastPing > 120000) { // 2 minutos sem pong
+                console.log(`[WS] Removendo conexão inativa: ${clientId}`);
+                client.ws.terminate();
+                connectedClients.delete(clientId);
+            }
+        }
+    }, 60000);
+}
+
+/**
+ * Trata as mensagens recebidas via WebSocket.
+ * 
+ * @param {string} clientId - ID interno do cliente
+ * @param {WebSocket} ws - Objeto WebSocket
+ * @param {object} message - Mensagem parseada
+ */
+function handleWebSocketMessage(clientId, ws, message) {
+    const client = connectedClients.get(clientId);
+    if (!client) return;
+    
+    switch (message.type) {
+        // Autenticação do WebSocket (vincula um userId à conexão)
+        case 'authenticate':
+            if (message.token) {
+                const payload = verifyJWT(message.token);
+                if (payload) {
+                    client.userId = payload.userId || payload.sub;
+                    client.authenticated = true;
+                    // Associa a conexão ao userId para lookup rápido
+                    connectedClients.set(client.userId, { ws, userId: client.userId, authenticated: true, lastPing: Date.now() });
+                    ws.send(JSON.stringify({ type: 'auth_success', userId: client.userId }));
+                    console.log(`[WS] Cliente ${clientId} autenticado como ${client.userId}`);
+                } else {
+                    ws.send(JSON.stringify({ type: 'auth_error', message: 'Token inválido' }));
+                }
+            }
+            break;
+        
+        // Chat no lobby
+        case 'chat':
+            if (client.authenticated) {
+                broadcastChat(client.userId, message.text);
+            }
+            break;
+        
+        // Entrar na fila de matchmaking
+        case 'join_queue':
+            if (client.authenticated) {
+                const result = addToMatchmaking(client.userId, message.mode || 'solo', playerProgress.level);
+                ws.send(JSON.stringify({ type: 'queue_status', ...result }));
+            } else {
+                ws.send(JSON.stringify({ type: 'error', message: 'Não autenticado' }));
+            }
+            break;
+        
+        // Sair da fila
+        case 'leave_queue':
+            for (const mode of ['solo', 'duo', 'squad']) {
+                matchmakingQueue[mode] = matchmakingQueue[mode].filter(p => p.userId !== client.userId);
+            }
+            ws.send(JSON.stringify({ type: 'queue_left' }));
+            break;
+        
+        // Ação durante a partida (tiro, morte, posição)
+        case 'game_action':
+            if (client.authenticated && message.roomId) {
+                handleGameAction(client.userId, message.roomId, message);
+            }
+            break;
+        
+        // Solicitação de perfil
+        case 'get_profile':
+            if (client.authenticated) {
+                const profile = getProfile(client.userId);
+                ws.send(JSON.stringify({ type: 'profile', data: profile }));
+            }
+            break;
+        
+        default:
+            ws.send(JSON.stringify({ type: 'unknown', message: `Tipo de mensagem desconhecido: ${message.type}` }));
+    }
+}
+
+/**
+ * Envia uma mensagem de chat para todos os clientes autenticados.
+ * 
+ * @param {string} userId - ID do remetente
+ * @param {string} text - Texto da mensagem
+ */
+function broadcastChat(userId, text) {
+    const payload = JSON.stringify({
+        type: 'chat',
+        userId,
+        nickname: userId === playerProgress.uid ? playerProgress.nickname : `User_${userId}`,
+        text,
+        timestamp: Date.now()
+    });
+    
+    connectedClients.forEach((client) => {
+        if (client.authenticated && client.ws.readyState === WebSocket.OPEN) {
+            client.ws.send(payload);
+        }
+    });
+}
+
+/**
+ * Processa ações de jogo (posição, tiro, morte) e atualiza o estado da sala.
+ * 
+ * @param {string} userId - ID do jogador
+ * @param {string} roomId - ID da sala
+ * @param {object} action - Dados da ação
+ */
+function handleGameAction(userId, roomId, action) {
+    const room = activeRooms.get(roomId);
+    if (!room || room.state !== 'playing') return;
+    
+    const player = room.players.find(p => p.userId === userId);
+    if (!player || !player.alive) return;
+    
+    switch (action.action) {
+        case 'position':
+            player.position = action.position;
+            // Não transmite posição continuamente para economizar (apenas quando solicitado ou periodicamente)
+            break;
+        case 'shoot':
+            // Registra dano causado (se houver alvo)
+            if (action.targetId) {
+                const target = room.players.find(p => p.userId === action.targetId && p.alive);
+                if (target) {
+                    const damage = Math.floor(Math.random() * 20) + 10; // Dano aleatório
+                    target.health -= damage;
+                    player.damage += damage;
+                    if (target.health <= 0) {
+                        target.health = 0;
+                        target.alive = false;
+                        player.kills++;
+                        // Notifica a morte
+                        broadcastToRoom(roomId, {
+                            type: 'kill',
+                            killer: userId,
+                            victim: action.targetId,
+                            weapon: action.weapon || 'unknown'
+                        });
+                    }
+                }
+            }
+            break;
+        case 'death':
+            player.alive = false;
+            player.health = 0;
+            broadcastToRoom(roomId, {
+                type: 'player_death',
+                userId,
+                cause: action.cause || 'unknown'
+            });
+            break;
+        default:
+            break;
+    }
+}
+
+// ===========================================================================
+// SEÇÃO 9: PERFIL E LOJA
+// ===========================================================================
+
+/**
+ * Retorna os dados do perfil de um jogador.
+ * 
+ * @param {string} userId - ID do usuário
+ * @returns {object} Dados do perfil
+ */
+function getProfile(userId) {
+    // No protótipo, retorna os dados do jogador padrão ou dados simulados
+    if (userId === playerProgress.uid) {
+        return {
+            uid: playerProgress.uid,
+            nickname: playerProgress.nickname,
+            level: playerProgress.level,
+            gold: playerProgress.gold,
+            diamonds: playerProgress.diamonds,
+            inventory: playerInventories.get(userId) || [],
+            character_list: [{ id: 1, name: 'Adam', skin_id: 0, skin_name: '', equipped: true, owned: true }],
+            friends: friendsList,
+            mail: initialMail
+        };
+    }
+    // Para outros usuários, gera um perfil simulado
+    return {
+        uid: userId,
+        nickname: `User_${userId}`,
+        level: Math.floor(Math.random() * 50) + 1,
+        gold: Math.floor(Math.random() * 5000),
+        diamonds: Math.floor(Math.random() * 500),
+        inventory: [
+            { type: 'character', id: 1, equipped: true }
+        ],
+        character_list: [{ id: 1, name: 'Adam', skin_id: 0, skin_name: '', equipped: true, owned: true }]
+    };
+}
+
+/**
+ * Processa a compra de um item da loja.
+ * Deduz as moedas e adiciona o item ao inventário.
+ * 
+ * @param {string} userId - ID do usuário
+ * @param {number} itemId - ID do item
+ * @param {string} itemType - Tipo do item ('weapon', 'character', 'skin', 'consumable')
+ * @returns {object} Resultado da compra
+ */
+function buyItem(userId, itemId, itemType) {
+    if (userId !== playerProgress.uid) {
+        return { success: false, message: 'Usuário não encontrado' };
+    }
+    
+    // Busca o item nos catálogos
+    let item = null;
+    let price = 0;
+    let currency = 'gold';
+    
+    switch (itemType) {
+        case 'weapon':
+            item = weapons.find(w => w.id === itemId);
+            price = item ? item.price : 0;
+            break;
+        case 'character':
+            item = characters.find(c => c.id === itemId);
+            price = item ? item.price : 0;
+            break;
+        case 'skin':
+            item = skins.find(s => s.id === itemId);
+            price = item ? item.price : 0;
+            break;
+        case 'consumable':
+            item = defaultWeapons.find(w => w.id === itemId && w.type === 'consumable');
+            price = item ? item.price : 0;
+            break;
+        default:
+            return { success: false, message: 'Tipo de item inválido' };
+    }
+    
+    if (!item) {
+        return { success: false, message: 'Item não encontrado' };
+    }
+    
+    // Verifica saldo
+    if (playerProgress.gold < price) {
+        return { success: false, message: 'Gold insuficiente' };
+    }
+    
+    // Deduz o preço
+    playerProgress.gold -= price;
+    
+    // Adiciona ao inventário
+    const inventory = playerInventories.get(userId) || [];
+    const existing = inventory.find(i => i.type === itemType && i.id === itemId);
+    if (existing && itemType === 'consumable') {
+        existing.quantity = (existing.quantity || 1) + 1;
+    } else if (!existing) {
+        inventory.push({ type: itemType, id: itemId, equipped: false, quantity: 1 });
+    }
+    playerInventories.set(userId, inventory);
+    
+    console.log(`[LOJA] ${playerProgress.nickname} comprou ${item.name} por ${price} gold.`);
+    return { success: true, message: `Comprou ${item.name}!`, newBalance: playerProgress.gold };
+}
+
+// ===========================================================================
+// SEÇÃO 10: ROTAS DO SERVIDOR HTTP (integração com o código original + novas)
+// ===========================================================================
+
+/**
+ * Cria o servidor HTTP e configura todas as rotas.
+ * Inclui as rotas originais do Barbosa e as novas rotas para o clone educacional.
+ */
 const server = http.createServer((req, res) => {
-    // Preflight
+    // Tratamento de requisições OPTIONS (CORS preflight)
     if (req.method === 'OPTIONS') {
         res.writeHead(200, {
             'Content-Length': '0',
@@ -374,15 +1141,15 @@ const server = http.createServer((req, res) => {
 
     try {
         // ------------------------------------------------------------------
-        // VERSÃO (1.43.3)
+        // ROTAS ORIGINAIS DO BARBOSA SERVER (mantidas integralmente)
         // ------------------------------------------------------------------
+        
+        // Versão do app
         if (route === '/live/ver.php' || route === '/live/appstoreversioninfo') {
-            return textResponse(res, '1.43.3');
+            return textResponse(res, VERSION);
         }
 
-        // ------------------------------------------------------------------
-        // TOKEN DE CONVIDADO
-        // ------------------------------------------------------------------
+        // Token de convidado (guest token)
         if (route === '/oauth/guest/token/grant') {
             const accessToken = generateToken('acc');
             const data = {
@@ -416,8 +1183,8 @@ const server = http.createServer((req, res) => {
                 is_review_server: false,
                 is_server_open: true,
                 maintenance_announcement: "",
-                remote_version: "1.43.0",
-                version: "1.43.3",
+                remote_version: VERSION,
+                version: VERSION,
                 appstore: "googleplay",
                 device: "android",
                 platform: "android",
@@ -435,9 +1202,7 @@ const server = http.createServer((req, res) => {
             return jsonResponse(res, data);
         }
 
-        // ------------------------------------------------------------------
-        // REGISTRO
-        // ------------------------------------------------------------------
+        // Registro de convidado
         if (route === '/oauth/guest/register') {
             const accessToken = generateToken('acc');
             const data = {
@@ -471,8 +1236,8 @@ const server = http.createServer((req, res) => {
                 is_review_server: false,
                 is_server_open: true,
                 maintenance_announcement: "Project teste beta",
-                remote_version: "1.43.0",
-                version: "1.43.3",
+                remote_version: VERSION,
+                version: VERSION,
                 appstore: "googleplay",
                 device: "android",
                 platform: "android",
@@ -489,9 +1254,7 @@ const server = http.createServer((req, res) => {
             return jsonResponse(res, data);
         }
 
-        // ------------------------------------------------------------------
-        // OAUTH GENÉRICOS
-        // ------------------------------------------------------------------
+        // Rotas OAuth genéricas
         const oauthRoutes = [
             '/oauth/login',
             '/oauth/logout',
@@ -504,21 +1267,19 @@ const server = http.createServer((req, res) => {
             return jsonResponse(res, { code: 0, message: "SUCCESS" });
         }
 
-        // ------------------------------------------------------------------
-        // LOCALIZAÇÃO (traduções)
-        // ------------------------------------------------------------------
+        // Localização (traduções)
         if (route.startsWith('/Localization/')) {
             return jsonResponse(res, {
                 "LOBBY_PLAY": "JOGAR",
                 "LOBBY_SETTINGS": "CONFIGURAÇÕES",
                 "LOBBY_STORE": "LOJA",
-                "CHARACTER_ADAM": "Adam"
+                "LOBBY_FRIENDS": "AMIGOS",
+                "CHARACTER_ADAM": "Adam",
+                "CHARACTER_ADAM_DESC": "O primeiro personagem."
             });
         }
 
-        // ------------------------------------------------------------------
-        // FACEBOOK SDK
-        // ------------------------------------------------------------------
+        // Configuração do Facebook SDK
         if (route === '/.json') {
             return jsonResponse(res, {
                 android_dialog_configs: {},
@@ -530,17 +1291,13 @@ const server = http.createServer((req, res) => {
             });
         }
 
-        // ------------------------------------------------------------------
-        // CROSSDOMAIN
-        // ------------------------------------------------------------------
+        // crossdomain.xml
         if (route === '/crossdomain.xml') {
             const xml = '<?xml version="1.0"?><!DOCTYPE cross-domain-policy SYSTEM "http://www.macromedia.com/xml/dtds/cross-domain-policy.dtd"><cross-domain-policy><allow-access-from domain="*" to-ports="*"/><allow-http-request-headers-from domain="*" headers="*"/></cross-domain-policy>';
             return xmlResponse(res, xml);
         }
 
-        // ------------------------------------------------------------------
-        // PROTOBUF ENDPOINTS
-        // ------------------------------------------------------------------
+        // Endpoints Protobuf (respostas binárias)
         if (route === '/GetDailyRankingReward') {
             const buffer = encodeProtobuf({ 1: [] });
             return binaryResponse(res, buffer);
@@ -554,9 +1311,7 @@ const server = http.createServer((req, res) => {
             return binaryResponse(res, buffer);
         }
 
-        // ------------------------------------------------------------------
-        // NOTÍCIAS
-        // ------------------------------------------------------------------
+        // Atividades (notícias)
         if (route === '/GetActivityDesc') {
             return jsonResponse(res, {
                 "1": [
@@ -572,8 +1327,8 @@ const server = http.createServer((req, res) => {
                     },
                     {
                         id: "102",
-                        title: "Atualização 1.43.3",
-                        description: "Melhorias e tradução completa.",
+                        title: `Atualização ${VERSION}`,
+                        description: "Melhorias de desempenho e tradução completa.",
                         image: "https://cdn.barbosasmobile.com/news/update.jpg",
                         start_time: now,
                         end_time: now + 86400 * 14,
@@ -594,12 +1349,10 @@ const server = http.createServer((req, res) => {
             });
         }
 
-        // ------------------------------------------------------------------
-        // APP INFO
-        // ------------------------------------------------------------------
+        // Informações do app
         if (route === '/app/info/get') {
             return jsonResponse(res, {
-                version: "1.43.3",
+                version: VERSION,
                 server_url: DEFAULT_SETTINGS.server_url,
                 cdn_url: DEFAULT_SETTINGS.cdn_url,
                 force_update: false,
@@ -612,23 +1365,19 @@ const server = http.createServer((req, res) => {
                 ],
                 available_channels: ["live"],
                 news: {
-                    android: "1.43.3 disponível!",
-                    ios: "1.43.3 disponível!"
+                    android: `${VERSION} disponível!`,
+                    ios: `${VERSION} disponível!`
                 }
             });
         }
 
-        // ------------------------------------------------------------------
-        // ROTA OCULTA
-        // ------------------------------------------------------------------
+        // Rota oculta (bytes misteriosos)
         if (route === '/hidden/message') {
             const buffer = Buffer.from(mysteriousBytes);
             return binaryResponse(res, buffer);
         }
 
-        // ------------------------------------------------------------------
-        // ADMIN
-        // ------------------------------------------------------------------
+        // Painel admin (login)
         if (route === '/admin/login') {
             if (req.method !== 'POST') {
                 res.writeHead(405);
@@ -651,6 +1400,8 @@ const server = http.createServer((req, res) => {
             });
             return;
         }
+
+        // Painel admin (atualizar dados do jogador)
         if (route === '/admin/update') {
             if (req.method !== 'POST') {
                 res.writeHead(405);
@@ -678,19 +1429,194 @@ const server = http.createServer((req, res) => {
             });
             return;
         }
+
+        // Painel admin (status do servidor)
         if (route === '/admin/status') {
             if (!verifyAdmin(req.headers.authorization)) {
                 return jsonResponse(res, { error: 'Não autorizado' }, 403);
             }
-            return jsonResponse(res, { server: 'online', players: 1, uptime: process.uptime(), playerProgress });
+            return jsonResponse(res, {
+                server: 'online',
+                players: connectedClients.size,
+                uptime: process.uptime(),
+                playerProgress,
+                activeRooms: activeRooms.size,
+                queueSizes: {
+                    solo: matchmakingQueue.solo.length,
+                    duo: matchmakingQueue.duo.length,
+                    squad: matchmakingQueue.squad.length
+                }
+            });
         }
 
         // ------------------------------------------------------------------
-        // CATCH-ALL (configuração geral)
+        // NOVAS ROTAS PARA O CLONE EDUCACIONAL
+        // ------------------------------------------------------------------
+
+        // POST /login - Autenticação via Protobuf (stub)
+        if (route === '/login' && req.method === 'POST') {
+            let body = Buffer.alloc(0);
+            req.on('data', chunk => {
+                body = Buffer.concat([body, chunk]);
+            });
+            req.on('end', () => {
+                try {
+                    // Tenta decodificar como Protobuf (LoginReq)
+                    const loginReq = decodeProtobuf(body);
+                    console.log('[LOGIN] Payload recebido:', JSON.stringify(loginReq, (key, value) =>
+                        typeof value === 'bigint' ? value.toString() : value
+                    ));
+                    
+                    // Stub: aceita qualquer login e retorna um token JWT
+                    const userId = loginReq['1']?.toString() || playerProgress.uid; // Campo 1 = open_id
+                    const token = generateJWT({
+                        sub: userId,
+                        nickname: 'Player',
+                        iat: Math.floor(Date.now() / 1000),
+                        exp: Math.floor(Date.now() / 1000) + 86400
+                    });
+                    
+                    // Resposta LoginRes (Protobuf)
+                    const response = encodeProtobuf({
+                        1: token,              // Token JWT
+                        2: '127.0.0.1',        // IP do lobby
+                        3: 60000,              // Porta do lobby
+                        4: '127.0.0.1',        // IP do matchmake
+                        5: 60001               // Porta do matchmake
+                    });
+                    
+                    return binaryResponse(res, response);
+                } catch (e) {
+                    console.error('[LOGIN] Erro ao processar:', e.message);
+                    const errorResponse = encodeProtobuf({ 1: 'Erro interno' });
+                    return binaryResponse(res, errorResponse, 500);
+                }
+            });
+            return;
+        }
+
+        // GET /config - Configurações do cliente
+        if (route === '/config') {
+            return jsonResponse(res, {
+                ...DEFAULT_SETTINGS,
+                version: VERSION,
+                matchmaking_servers: [
+                    { ip: '127.0.0.1', port: 60001, region: 'BR' }
+                ],
+                cdn_base: 'https://cdn.barbosasmobile.com/',
+                features: {
+                    ranked: false,
+                    clan: false,
+                    battlepass: false,
+                    store: true,
+                    events: true
+                }
+            });
+        }
+
+        // POST /matchmaking - Entrar na fila (via HTTP, fallback para WS)
+        if (route === '/matchmaking' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const data = JSON.parse(body);
+                    const result = addToMatchmaking(playerProgress.uid, data.mode || 'solo', playerProgress.level);
+                    return jsonResponse(res, result);
+                } catch (e) {
+                    return jsonResponse(res, { success: false, message: 'JSON inválido' }, 400);
+                }
+            });
+            return;
+        }
+
+        // GET /shop - Lista de itens da loja
+        if (route === '/shop') {
+            return jsonResponse(res, {
+                weapons,
+                characters,
+                skins,
+                playerGold: playerProgress.gold,
+                playerDiamonds: playerProgress.diamonds
+            });
+        }
+
+        // POST /shop/buy - Comprar item
+        if (route === '/shop/buy' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const { itemId, itemType } = JSON.parse(body);
+                    const result = buyItem(playerProgress.uid, itemId, itemType);
+                    return jsonResponse(res, result, result.success ? 200 : 400);
+                } catch (e) {
+                    return jsonResponse(res, { success: false, message: 'JSON inválido' }, 400);
+                }
+            });
+            return;
+        }
+
+        // GET /leaderboard - Ranking simulado
+        if (route === '/leaderboard') {
+            const mockLeaderboard = [
+                { rank: 1, nickname: 'ProPlayer99', level: 85, kills: 1500 },
+                { rank: 2, nickname: 'KallidadeOF', level: 50, kills: 800 },
+                { rank: 3, nickname: 'SniperBR', level: 72, kills: 750 },
+                { rank: 4, nickname: 'GuerreiroBR', level: 32, kills: 300 },
+                { rank: 5, nickname: playerProgress.nickname, level: playerProgress.level, kills: 100 }
+            ];
+            return jsonResponse(res, mockLeaderboard);
+        }
+
+        // GET /profile - Perfil do jogador (requer token)
+        if (route === '/profile') {
+            const auth = req.headers.authorization;
+            if (!auth) {
+                return jsonResponse(res, { error: 'Token não fornecido' }, 401);
+            }
+            const payload = verifyJWT(auth.replace('Bearer ', ''));
+            if (!payload) {
+                return jsonResponse(res, { error: 'Token inválido' }, 401);
+            }
+            const userId = payload.sub || payload.userId;
+            return jsonResponse(res, getProfile(userId));
+        }
+
+        // GET /events - Eventos ativos
+        if (route === '/events') {
+            return jsonResponse(res, [
+                {
+                    id: 'event_001',
+                    name: 'Treinamento de Verão',
+                    description: 'Complete missões diárias para ganhar recompensas.',
+                    startTime: now - 86400,
+                    endTime: now + 86400 * 14,
+                    rewards: [
+                        { type: 'gold', amount: 500 },
+                        { type: 'weapon', id: 1 }
+                    ]
+                },
+                {
+                    id: 'event_002',
+                    name: 'Desafio do Adam',
+                    description: 'Vença partidas usando apenas o Adam.',
+                    startTime: now,
+                    endTime: now + 86400 * 7,
+                    rewards: [
+                        { type: 'diamonds', amount: 100 }
+                    ]
+                }
+            ]);
+        }
+
+        // ------------------------------------------------------------------
+        // CATCH-ALL: Configuração completa (merge com query)
+        // Mantido do código original
         // ------------------------------------------------------------------
         const mergedConfig = {
             ...DEFAULT_SETTINGS,
-            version: query.version || '1.43.3',
+            version: query.version || VERSION,
             lang: query.lang || 'pt-br',
             device: query.device || 'android',
             appstore: query.appstore || 'googleplay',
@@ -731,7 +1657,7 @@ const server = http.createServer((req, res) => {
             character_name: 'Adam',
             character_skin_id: 0,
             character_skin_name: '',
-            inventory: [],
+            inventory: playerInventories.get(playerProgress.uid) || [],
             character_list: [{ id: 1, name: 'Adam', skin_id: 0, skin_name: '', equipped: true, owned: true }],
             friends: friendsList,
             events: [],
@@ -745,7 +1671,7 @@ const server = http.createServer((req, res) => {
                 ranked: false,
                 clan: false,
                 battlepass: false,
-                store: false,
+                store: true,
                 luck_royale: false,
                 weapon_royale: false,
                 events: true,
@@ -777,6 +1703,8 @@ const server = http.createServer((req, res) => {
         return jsonResponse(res, mergedConfig);
 
     } catch (error) {
+        // Em caso de erro grave, retorna as configurações padrão
+        console.error('[ERRO]', error.message);
         const errorBody = JSON.stringify(DEFAULT_SETTINGS);
         const errorBuffer = Buffer.from(errorBody, 'utf-8');
         applyCloudflareHeaders(res, 'application/json; charset=utf-8', errorBuffer.length);
@@ -785,14 +1713,26 @@ const server = http.createServer((req, res) => {
     }
 });
 
-// ============================================================================
-// INICIALIZAÇÃO
-// ============================================================================
+// ===========================================================================
+// SEÇÃO 11: INICIALIZAÇÃO DO SERVIDOR E WEBSOCKET
+// ===========================================================================
+
+// Configura o WebSocket sobre o servidor HTTP
+setupWebSocketServer(server);
+
+// Inicia o servidor na porta definida
 server.listen(PORT, () => {
-    console.log(`Servidor privado rodando na porta ${PORT}`);
-    console.log(`Personagem padrão: Adam (ID: 1)`);
-    console.log(`Painel admin: /admin/login com usuário "${ADMIN_USERNAME}"`);
-    console.log(`Versão: 1.43.3 (modo Barbosa)`);
+    console.log('============================================================');
+    console.log(` ${SERVER_NAME}`);
+    console.log(` Versão: ${VERSION} (Winterlands 2018)`);
+    console.log(` Porta: ${PORT}`);
+    console.log(` Endereço: http://localhost:${PORT}`);
+    console.log(` WebSocket: ws://localhost:${PORT}`);
+    console.log(` Painel Admin: http://localhost:${PORT}/admin/login`);
+    console.log(` Personagem padrão: Adam (ID: 1)`);
+    console.log('============================================================');
+    console.log('[OK] Servidor pronto para receber conexões.');
 });
 
+// Exporta o servidor para uso como módulo (se necessário)
 module.exports = server;
