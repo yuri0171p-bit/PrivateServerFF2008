@@ -20,7 +20,7 @@ const FIREBASE_URL = FIREBASE_PLAYER_URL;
 // Constantes do servidor de jogo
 const JWT_SECRET = 'barbosa-secret-key-2018-winterlands';  // Chave para assinar tokens JWT
 const SERVER_NAME = 'Barbosa Server 1.25.3';               // Nome do servidor
-const VERSION = '1.14.0';                                  // Versão suportada
+const VERSION = '1.25.7';                                  // Versão suportada
 const WINTERLANDS_BUILD = '20181201';                      // Build do Winterlands
 
 // ---------------------------------------------------------------------------
@@ -196,9 +196,9 @@ const DEFAULT_SETTINGS = {
     is_server_open: true,
     maintenance_announcement: 'Bem-vindo ao servidor privado!',
     remote_option_version: '1.0.0',
-    remote_version: '1.14.0',
+    remote_version: '1.25.7',
     server_url: 'https://versionscommon.barbosasmobile.com/live/',
-    version: '1.14.0',
+    version: '1.25.7',
     lang: 'pt-br',
     device: 'android',
     appstore: 'googleplay',
