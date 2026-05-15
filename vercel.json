@@ -1,9 +1,19 @@
 {
   "version": 2,
-  "rewrites": [
-    { "source": "/", "destination": "/api/main" },
-    { "source": "/api/main", "destination": "/api/main.js" },
-    { "source": "/api/ver", "destination": "/api/ver.js" },
-    { "source": "/itens.json", "destination": "/itens.json" }
+  "builds": [
+    {
+      "src": "api/main.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/itens.json",
+      "dest": "/itens.json"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "api/main.js"
+    }
   ]
 }
