@@ -1,19 +1,27 @@
 {
   "version": 2,
-  "builds": [
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "rewrites": [
     {
-      "src": "api/main.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/itens.json",
-      "dest": "/itens.json"
+      "source": "/v2.5/dialog/oauth",
+      "destination": "/api/oauth_dialog"
     },
     {
-      "src": "/(.*)",
-      "dest": "api/main.js"
+      "source": "/api/service-sever/live/ver.php",
+      "destination": "/api/ver"
+    },
+    {
+      "source": "/api/service-sever/live/ver",
+      "destination": "/api/ver"
+    },
+    {
+      "source": "/oauth/login",
+      "destination": "/oauth/login/oauth_login.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }
