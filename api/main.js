@@ -184,17 +184,21 @@ const extraPlayerData = {
 
 // Configurações padrão do cliente (mantidas do código original)
 const DEFAULT_SETTINGS = {
+    abhotupdate_cdn_url: "https://dl-core.cdn.freefiremobile.com/live/ABHotUpdates/",
+    backup_cdn_url: "https://dl.cdn.freefiremobile.com/live/ABHotUpdates/",
     appstore_url: 'https://discord.gg/projectreverger',
     billboard_msg: 'Bem-vindo ao servidor privado!',
     cdn_url: 'https://cdn.barbosasmobile.com/',
     code: 0,
     country_code: 'BR',
     force_to_restart_app: false,
-    gdpr_version: 2,
+    gdpr_version: 0,
+    img_cdn_url: "https://dl.cdn.freefiremobile.com/common/",
     is_firewall_open: false,
     is_review_server: false,
     is_server_open: true,
     maintenance_announcement: 'Bem-vindo ao servidor privado!',
+    maintenance_region: "",
     remote_option_version: '1.0.0',
     remote_version: '1.14.0',
     server_url: 'https://versionscommon.barbosasmobile.com/live/',
