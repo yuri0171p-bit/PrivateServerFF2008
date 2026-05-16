@@ -4,26 +4,48 @@
     {
   {"source": "/api/register", "destination": "/api/main"},
 {"source": "/api/PlatformRegister", "destination": "/api/PlatformRegister"},
+    },
+    {
 {"source": "/api/PlatformLogin", "destination": "/api/PlatformLogin"},
 {"source": "/PlatformLogin", "destination": "/api/Platformlogin"},
+    },
+    {
 {"source": "/MajorLogin", "destination": "/api/Platformlogin"},
 {"source": "/MajorRegister", "destination": "/api/Platformlegister"},
+    },
+    {
 {"source": "/PlatformRegister", "destination": "/api/PlatformRegister"},
 {"source": "/oauth/token/facebook/exchange(.*)", "destination": "/api/facebook.js"},
+    },
+    {
 {"source": "/oauth/token/inspect(.*)", "destination": "/api/facebook.js"},
 {"source": "/100067/oauth/token/facebook/exchange", "destination": "/api/facebook.js"},
+    },
+    {
 {"source": "/100067/oauth/token/inspect", "destination": "/api/facebook"},
 {"source": "/100067/oauth/token", "destination": "/api/facebook"},
+    },
+    {
 {"source": "/oauth/token/inspect/:path", "destination": "/api/facebook"},
 {"source": "/app/info/get", "destination": "/api/appInfo"},
+    },
+    {
 {"source": "/live/ver.php(.*)", "destination": "/api/ver"}.
 {"source": "/live/(.*)", "destination": "/api/ver"},
+    },
+    {
 {"source": "/CreateClan", "destination": "/api/main"},
 {"source": "/GetGachaDesc", "destination": "/api/main.js"},
+    },
+    {
 {"source": "/GetGachaInfo", "destination": "/api/main.js"},
 {"source": "/GetSkills", "destination": "/api/main"},
+    },
+    {
 {"source": "/GetAnnouncement", "destination": "/api/main"},
 {"source": "/GetAttendanceList", "destination": "/api/main"},
+    },
+    {
   {"source": "/GetProfiles", "destination": "/api/main"},
   {"source": "/GetStore", "destination": "/api/main"},
     }
