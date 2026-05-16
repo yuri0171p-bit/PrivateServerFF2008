@@ -26,5 +26,3 @@
   {"source": "/GetProfiles", "destination": "/api/main"},
   {"source": "/GetStore", "destination": "/api/main"},
 }
-]
-}
