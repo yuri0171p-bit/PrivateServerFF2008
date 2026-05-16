@@ -8,7 +8,7 @@
 {"source": "/MajorLogin", "destination": "/api/Platformlogin"},
 {"source": "/MajorRegister", "destination": "/api/Platformlegister"},
 {"source": "/PlatformRegister", "destination": "/api/PlatformRegister"},
-("source": "/oauth/token/facebook/exchange(.*)", "destination": "/api/facebook.js"},
+{"source": "/oauth/token/facebook/exchange(.*)", "destination": "/api/facebook.js"},
 {"source": "/oauth/token/inspect(.*)", "destination": "/api/facebook.js"},
 {"source": "/100067/oauth/token/facebook/exchange", "destination": "/api/facebook.js"},
 {"source": "/100067/oauth/token/inspect", "destination": "/api/facebook"},
@@ -23,7 +23,7 @@
 {"source": "/GetSkills", "destination": "/api/main"},
 {"source": "/GetAnnouncement", "destination": "/api/main"},
 {"source": "/GetAttendanceList", "destination": "/api/main"},
-  ("source": "/GetProfiles", "destination": "/api/main"},
+  {"source": "/GetProfiles", "destination": "/api/main"},
   {"source": "/GetStore", "destination": "/api/main"},
 }
 ]
