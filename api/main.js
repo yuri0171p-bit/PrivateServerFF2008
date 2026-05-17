@@ -20,7 +20,7 @@ const FIREBASE_URL = FIREBASE_PLAYER_URL;
 // Constantes do servidor de jogo
 const JWT_SECRET = 'barbosa-secret-key-2018-winterlands';  // Chave para assinar tokens JWT
 const SERVER_NAME = 'Barbosa Server 1.25.3';               // Nome do servidor
-const VERSION = '1.16.0';                                  // Versão suportada
+const VERSION = '1.41.0';                                  // Versão suportada
 const WINTERLANDS_BUILD = '20181201';                      // Build do Winterlands
 
 // ---------------------------------------------------------------------------
@@ -201,9 +201,9 @@ const DEFAULT_SETTINGS = {
     maintenance_announcement: 'Bem-vindo ao servidor privado!',
     maintenance_region: "",
     remote_option_version: '1.0.0',
-    remote_version: '1.16.0',
+    remote_version: '1.41.0',
     server_url: "https://loginbp.ggblueshark.com/",
-    version: '1.16.0',
+    version: '1.41.0',
     lang: 'pt-br',
     device: 'android',
     appstore: 'googleplay',
