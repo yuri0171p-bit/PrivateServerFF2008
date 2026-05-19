@@ -1,6 +1,7 @@
 {
   "version": 2,
   "rewrites": [
+    { "source": "/", "destination": "/api/ver" },
     { "source": "/api/PlatformRegister", "destination": "/api/PlatformRegister" },
     { "source": "/api/PlatformLogin", "destination": "/api/PlatformLogin" },
     { "source": "/PlatformLogin", "destination": "/api/PlatformLogin" },
