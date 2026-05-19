@@ -166,13 +166,15 @@ const DEFAULT_APP_INFO = {
     event_log_url: 'https://private-serverfrrunion.vercel.app/',
 
     // -------------------------------------------------------
-    // Versões
-    // -------------------------------------------------------
-    version: '1.24.0',
-    remote_version: '1.24.0',
-    remote_option_version: '1.0.0',
-    latest_release_version: '1.24.0',
-
+    // api/ver.js
+export default function handler(req, res) {
+  res.status(200).json({
+    version: "1.43.0",
+    server_url: "https://private-server-ff-2008-ou4z.vercel.app/",
+    cdn_url: "https://cdn.barbosasmobile.com/",
+    remote_version: "1.43.0",
+    is_server_open: true,
+    use_login_optional: true
     // -------------------------------------------------------
     // Estado do servidor
     // -------------------------------------------------------
